@@ -216,11 +216,12 @@
   .hint.hint2{margin-top:5px}
   .hint.hint3{margin-top:5px}
 
-  /* 例子条：点了某个拍法按钮后，显示一条可模仿的完整需求例子 */
-  .exbar{background:#181d1a; border-color:#2c3a30; margin-bottom:8px}
-  .exbar .exlab{color:#7fb08f; font-weight:600; white-space:nowrap}
-  .exbar .extext{color:#9aa5b5; line-height:1.55}
-  .exbar .exclose{flex:0 0 auto; cursor:pointer; color:#5a6474; padding:0 4px; font-size:13px}
+  /* 例子条：点了某个拍法按钮后，显示「模板的填好版」可模仿 */
+  .exbar{background:#181d1a; border-color:#2c3a30; margin-bottom:8px; flex-wrap:nowrap}
+  .exbar .exlab{color:#7fb08f; font-weight:600; white-space:nowrap; flex:0 0 auto}
+  .exbar .extext{color:#9aa5b5; line-height:1.55; white-space:pre-line; flex:1 1 auto; min-width:0;
+                 max-height:220px; overflow-y:auto; font-size:11px}
+  .exbar .exclose{flex:0 0 auto; cursor:pointer; color:#5a6474; padding:0 4px; font-size:13px; align-self:flex-start}
   .exbar .exclose:hover{color:var(--dim)}
 
   .tplbar{max-width:860px; margin:0 auto 8px; display:none; align-items:center; gap:10px; flex-wrap:wrap;
@@ -238,6 +239,58 @@
   .tplbar .tchip:hover{border-color:var(--line); color:var(--dim)}
   .tplbar .tchip.on{border-color:var(--accent); color:var(--accent)}
   .hint span:hover{border-color:var(--line); color:var(--dim)}
+
+  /* 长片面板：设定 → 段表 → 主角 → 提示词，同一个容器里切换四步 */
+  .lfbar{max-width:860px; margin:0 auto 8px; display:none; background:#141821; border:1px solid var(--line);
+         border-radius:11px; font-size:12px; color:var(--dim); overflow:hidden}
+  .lfbar.show{display:block}
+  .lfhead{display:flex; align-items:center; gap:8px; padding:8px 12px; background:#11151d;
+          border-bottom:1px solid var(--line); font-size:11.5px}
+  .lfhead b{color:var(--accent); font-weight:600; font-size:12.5px}
+  .lfhead .lfstep{color:#5a6474}
+  .lfhead .lfclose{margin-left:auto; cursor:pointer; color:#5a6474; padding:0 3px}
+  .lfhead .lfclose:hover{color:var(--dim)}
+  .lfbody{padding:10px 12px; max-height:56vh; overflow-y:auto}
+  .lfrow{display:flex; gap:8px; align-items:center; margin-bottom:7px}
+  .lfrow > label{flex:0 0 auto; width:58px; color:#6b7686; font-size:11.5px}
+  .lfbar input[type=text], .lfbar input[type=number], .lfbar textarea, .lfbar select{
+    background:#1a1f28; border:1px solid var(--line); border-radius:6px; color:var(--fg);
+    font-size:12px; padding:5px 7px; font-family:inherit; width:100%; box-sizing:border-box}
+  .lfbar textarea{resize:vertical; min-height:34px; line-height:1.55}
+  .lfbar select{width:auto; min-width:132px; max-width:210px}
+  .lfseg{border:1px solid var(--line); border-radius:9px; padding:8px 9px; margin-bottom:7px; background:#171c25}
+  .lfseg .lfs1{display:flex; gap:6px; align-items:center; margin-bottom:6px}
+  .lfseg .lfno{flex:0 0 auto; width:22px; height:22px; border-radius:50%; background:#232a36; color:#8b96a8;
+               font-size:11px; display:flex; align-items:center; justify-content:center}
+  .lfseg .lft{font-size:11px; color:#5a6474; margin-left:auto; white-space:nowrap}
+  .lfseg .lfdel{cursor:pointer; color:#5a6474; padding:0 2px}
+  .lfseg .lfdel:hover{color:var(--bad)}
+  .lfwhy{font-size:11px; color:#7a8496; line-height:1.55; margin-top:5px}
+  .lfbase{font-size:10.5px; color:#6b7686; margin-top:4px; display:flex; gap:4px; flex-wrap:wrap}
+  .lfbase i{font-style:normal; background:#1c222c; border-radius:4px; padding:1px 5px}
+  .lfacts{display:flex; gap:7px; flex-wrap:wrap; margin-top:9px; align-items:center}
+  .lfbtn{background:#232a36; border:1px solid var(--line); color:var(--dim); border-radius:6px;
+         padding:5px 11px; font-size:11.5px; cursor:pointer; font-family:inherit}
+  .lfbtn:hover{border-color:var(--accent); color:var(--accent)}
+  .lfbtn.pri{background:var(--accent); border-color:var(--accent); color:#0b0e13; font-weight:600}
+  .lfbtn.pri:hover{opacity:.9; color:#0b0e13}
+  .lfbtn:disabled{opacity:.4; cursor:not-allowed}
+  .lfwarn{font-size:11px; color:#d8a657; background:#241f14; border:1px solid #3d3320; border-radius:6px;
+          padding:6px 9px; margin-bottom:8px; line-height:1.6}
+  .lfsum{font-size:11px; color:#5a6474; margin:2px 0 8px}
+  .lfsum b{color:var(--dim); font-weight:500}
+  .lfcard{border:1px solid var(--line); border-radius:9px; background:#171c25; margin-bottom:8px; overflow:hidden}
+  .lfcard .lfc1{display:flex; gap:7px; align-items:center; padding:7px 10px; background:#11151d; font-size:11.5px}
+  .lfcard .lfc1 b{color:var(--accent); font-weight:500}
+  .lfcard .lfcp{margin-left:auto; display:flex; gap:6px}
+  .lfcard textarea{border:0; border-radius:0; background:#171c25; min-height:132px; font-size:11px;
+                   padding:9px 11px; font-family:ui-monospace,Menlo,Consolas,monospace}
+  .lfkbd{color:#4d5666; font-size:10.5px; cursor:default; flex:0 0 auto}
+  .lfkbd:hover{border-color:transparent; color:#4d5666}
+  .lfdone{color:#7fb08f}
+  .lfspin{display:inline-block; width:11px; height:11px; border:1.5px solid #3a4350; border-top-color:var(--accent);
+          border-radius:50%; animation:lfspin .8s linear infinite; vertical-align:-1px}
+  @keyframes lfspin{to{transform:rotate(360deg)}}
 
   .empty{text-align:center; padding:60px 20px; color:#5a6474}
   .empty h2{font-size:16px; color:var(--dim); margin-bottom:9px; font-weight:600}
@@ -431,6 +484,7 @@
     <div class="tplbar exbar" id="exbar"></div>
     <div class="tplbar" id="tplbar"></div>
     <div class="tplbar" id="pickbar"></div>
+    <div class="lfbar" id="lfbar"></div>
     <div class="composer-inner">
       <textarea id="input" rows="1" placeholder="描述你要做的视频……也可以接着改：「再短一点」「换成口播版」"></textarea>
       <button class="send" id="send" onclick="send()">➤</button>
@@ -447,22 +501,10 @@
       <span onclick="fillTpl('t8')" title="反差钩子短片：一个包袱，产品是包袱落点">反差</span>
     </div>
     <div class="hint hint2">
-      <b class="lab">品牌：</b>
-      <span onclick="fillPreset('b1')" title="品牌故事片：有人物有转折，讲『谁在为什么做这件事』">品牌故事</span>
-      <span onclick="fillPreset('b2')" title="世界观奇观片：奇幻／科幻大场面，卖『这东西不一般』">世界观奇观</span>
-      <span onclick="fillPreset('b3')" title="溯源工艺片：把『怎么做的』摊开拍，一段一个工序">溯源工艺</span>
-      <span onclick="fillPreset('b4')" title="沉浸带看片：第一人称一镜到底，像自己走了一趟">沉浸带看</span>
-      <span onclick="fillPreset('b5')" title="质感形象片：没人出镜，只用光和材质让人想要">质感形象片</span>
-      <span onclick="fillPreset('b6')" title="人设口播片：真人对镜头讲品牌理念，不轰炸卖点">人设口播</span>
-    </div>
-    <div class="hint hint3">
-      <b class="lab">科普：</b>
-      <span onclick="fillPreset('k1')" title="原理讲解片：讲『为什么会这样』，一个知识点一段">原理讲解</span>
-      <span onclick="fillPreset('k2')" title="过程演示片：一段一个工序，按物理顺序推进，不跳步">过程演示</span>
-      <span onclick="fillPreset('k3')" title="辟谣纠错片：先立错误认知再推翻，给替代说法">辟谣纠错</span>
-      <span onclick="fillPreset('k4')" title="双人问答片：一问一段，先把结论给出来再解释">双人问答</span>
-      <span onclick="fillPreset('k5')" title="微观世界片：菌群／分子／肠道，讲看不见的机制">微观世界</span>
-      <span onclick="fillPreset('k6')" title="数据拆解片：配料表／检测报告逐项指过去，数字上字卡">数据拆解</span>
+      <b class="lab">长片：</b>
+      <span onclick="openLong('brand')" title="品牌片：一般 30-120 秒。先拆段，再逐段配镜头逻辑">品牌片</span>
+      <span onclick="openLong('kepu')" title="科普片：一般 2-5 分钟。段与段有知识依赖，顺序不能换">科普片</span>
+      <span class="lfkbd">也可以直接打「品牌：一句话」或「科普：一句话」</span>
     </div>
   </div>
   </div><!-- /chatView -->
@@ -788,13 +830,30 @@ function send(){
   const text = el.value.trim();
   if(!text || S.busy) return;
 
-  /* 第 1 轮 · 选型：「带货：」「品牌：」「科普：」前缀，先把模板填好停在输入框，等你确认再按回车 */
-  const mt = text.match(/^(带货|品牌片?|宣传片|科普片?)\s*[:：]\s*([\s\S]*)$/);
+  /* 长片（品牌 / 科普）：前缀只当语境，打开面板走「设定→拆段→配主角→出提示词」。
+     不再像旧版那样先判 6 类再填模板 —— 那是把「段型」当「片型」用了。 */
+  const ml = text.match(/^(品牌片?|宣传片|科普片?)\s*[:：]\s*([\s\S]*)$/);
+  if(ml){
+    const kind = /^科普/.test(ml[1]) ? 'kepu' : 'brand';
+    /* 主题句尾的「200秒 / 200s」当总时长抽出来，别整句丢给主题 */
+    let body = ml[2].trim(), sec = 0;
+    const msec = body.match(/[，,、\s]*(\d{2,3})\s*(?:秒|s|sec)?\s*$/i);
+    if(msec && /秒|s|sec/i.test(body.slice(msec.index))){
+      sec = parseInt(msec[1], 10);
+      body = body.slice(0, msec.index).replace(/[，,、\s]+$/, '').trim();
+    }
+    el.value = ''; el.style.height = 'auto';
+    openLong(kind, body, sec);
+    return;
+  }
+
+  /* 第 1 轮 · 带货选型：「带货：」前缀，先把模板填好停在输入框，等你确认再按回车 */
+  const mt = text.match(/^带货\s*[:：]\s*([\s\S]*)$/);
   if(mt){
-    const body = mt[2].trim();
+    const body = mt[1].trim();
     const brackets = (body.match(/【/g) || []).length;
     if(body && body.length <= 200 && brackets <= 2){
-      if(!ROUTING) routeOffer(mt[1], body);
+      if(!ROUTING) routeOffer('带货', body);
       return;
     }
   }
@@ -1601,7 +1660,7 @@ ${body}${cut}
 /* ============================== 杂项 ============================== */
 /* ============================== 底栏模板（8 种带货形式 + 品牌 / 科普） ============================== */
 const TPL = {
-t1: `带货口播【15-30】秒竖屏：真人测评【产品名】
+t1: `带货口播【15-30】秒【9:16】竖屏：真人测评【产品名】
 产品拆件：【袋身材质颜色（含“偏紫罗兰，never 纯蓝”这类锚）／盖子结构／内容物颜色质地】
 出镜人设：【性别＋年龄段＋身份＋穿搭，如：28岁女营养师，燕麦针织＋亚麻围裙】
 核心卖点（只选1个）：【如：整果打浆＋益生菌发酵，花青素更好吸收】
@@ -1612,7 +1671,7 @@ t1: `带货口播【15-30】秒竖屏：真人测评【产品名】
 质感二选一：【手机实拍测评感／投放级广告感】
 合规红线：不说治疗/改善/增强免疫力/通便；画面不渲字，价格卖点字卡后期贴`,
 
-t2: `带货开箱【20-30】秒竖屏：手部特写开箱【产品名】
+t2: `带货开箱【20-30】秒【9:16】竖屏：手部特写开箱【产品名】
 产品拆件：【快递箱/礼盒 ＋ 袋身材质颜色／盖子／内容物】
 出镜方式：只露手与半身，不露全脸；【手部特征：指甲干净、无夸张饰品】
 前3秒钩子＝【划开包裹“嗤啦”声＋箱盖翻开、第一件产品露出一角】
@@ -1623,7 +1682,7 @@ t2: `带货开箱【20-30】秒竖屏：手部特写开箱【产品名】
 质感二选一：【手机实拍测评感／投放级广告感】
 合规红线：不说治疗/改善/增强免疫力/通便；袋面只说“有印刷”不指定文字；画面不渲字`,
 
-t3: `带货剧情总长【30-60】秒（拆2段，每段≤30秒，本次先写第【1】段）【16:9或竖屏】
+t3: `带货剧情【25-30】秒单条【9:16】竖屏
 产品：【产品名】＋产品拆件【袋身材质颜色／盖子／内容物】
 场景设定：【时间＋地点＋人物＋正在发生的小事，如：周三早7点半，厨房，女儿上学前手忙脚乱】
 角色：【1-2人外观：年龄、发型、服装；同一角色全片不换装】
@@ -1635,18 +1694,18 @@ t3: `带货剧情总长【30-60】秒（拆2段，每段≤30秒，本次先写�
 质感二选一：【手机实拍测评感／投放级广告感】
 合规红线：不说治疗/改善/增强免疫力/通便；画面不渲字，价格卖点字卡后期贴`,
 
-t4: `带货Vlog总长【45-60】秒（拆2段，每段≤30秒，本次先写第【1】段）竖屏
+t4: `带货Vlog【25-30】秒单条【9:16】竖屏
 产品：【产品名】＋产品拆件【袋身材质颜色／盖子／内容物】
 主角人设：【年龄＋职业感＋穿搭，如：30岁新媒体运营，灰卫衣＋棒球帽】
 拍摄风格：手持跟拍、自然光、轻微晃动与对焦漂移（手机实拍感，不要电影感）
-时间线3个片段：【07:20 出门前 → 12:40 工位下午 → 18:30 回家路上】
-产品出现位置：第【2】段自然入镜，方式：【从包里掏出／桌上早已放着一袋】
+时间线3个片段（每段8秒左右）：【07:20 出门前 → 12:40 工位下午 → 18:30 回家路上】
+产品出现位置：中段自然入镜，方式：【从包里掏出／桌上早已放着一袋】
 台词方式：前半段旁白式自言自语（“今天又是三场会”），产品出现时转成【对口播一句】
 收尾：【回到桌面，产品在旁边，镜头缓缓停下】＋【一句轻收尾】
 说人话、别广告腔，例句：“【一句日常感叹】”
 合规红线：不说治疗/改善/增强免疫力/通便；画面不渲字`,
 
-t5: `带货产品片【15-30】秒【16:9或竖屏】：无人物出镜
+t5: `带货产品片【15-30】秒【9:16】竖屏：无人物出镜
 产品：【产品名】
 产品拆件：【袋身材质（哑光/亮面）、袋身颜色（含 never 纯蓝 这类锚）、盖子结构与颜色、内容物颜色与质地】
 环境与布景：【深灰石材台面＋一束侧逆光／纯色背景＋水花】
@@ -1656,7 +1715,7 @@ t5: `带货产品片【15-30】秒【16:9或竖屏】：无人物出镜
 收尾：【产品定格英雄帧，留干净空白区给后期字卡】——画面不渲任何文字
 合规红线：不说任何功效词；画面不渲字，价格卖点字卡后期贴`,
 
-t6: `带货ASMR【15-30】秒竖屏：只出手部与近景，不露全脸
+t6: `带货ASMR【15-30】秒【9:16】竖屏：只出手部与近景，不露全脸
 产品：【产品名】＋【袋身材质颜色／盖子／内容物颜色质地（挂壁、果肉感）】
 镜头：微距/探针镜头感，浅景深，声音优先
 画面-声音配对（铁律：一拍一个可见变化＋一个配套声音）：
@@ -1670,7 +1729,7 @@ t6: `带货ASMR【15-30】秒竖屏：只出手部与近景，不露全脸
 台词像聊天、不像广告，例句：“不齁，咽下去有回甘”
 合规红线：不说治疗/改善/增强免疫力/通便；不出现夸张功效反应（如捂肚子）；画面不渲字`,
 
-t7: `带货对比【20-30】秒竖屏：真人对镜头做对比测评【产品名】
+t7: `带货对比【20-30】秒【9:16】竖屏：真人对镜头做对比测评【产品名】
 产品拆件：【本方产品外观】；对比物：【泛化描述，如：市面常见果汁饮料一杯，不点名任何品牌】
 出镜人设：【性别＋年龄段＋身份＋穿搭一句话】
 前3秒钩子＝【两杯并置，一杯浑浊一杯清透，手指依次点过去＋一声轻敲玻璃】
@@ -1681,7 +1740,7 @@ t7: `带货对比【20-30】秒竖屏：真人对镜头做对比测评【产品�
 质感二选一：【手机实拍测评感／投放级广告感】
 合规红线：不点名不贬低任何竞品、不做功效对比；画面不渲字，配料表字卡后期贴`,
 
-t8: `带货反差总长【15-30】秒竖屏：一个包袱的短视频，产品是包袱落点
+t8: `带货反差总长【15-30】秒【9:16】竖屏：一个包袱的短视频，产品是包袱落点
 产品：【产品名】＋【袋身材质颜色／盖子／内容物】
 角色：【1人外观，表演一本正经、不夸张扮丑】
 前3秒钩子＝【强反差动作，如：她把一袋深紫色饮品倒进高脚杯，表情像在喝红酒】
@@ -1693,193 +1752,100 @@ t8: `带货反差总长【15-30】秒竖屏：一个包袱的短视频，产品�
 质感二选一：【手机实拍测评感／投放级广告感】
 合规红线：不拿身体状况/疾病开玩笑；不说治疗/改善类词；画面不渲字`,
 
-b1: `品牌故事片总长【60-90】秒【16:9】（拆【3】段，每段≤30秒，逐段生成后剪辑拼接，本次先写【第1段／共3段】）
-产品：百芙乐蓝莓后生元饮品
-故事线（三幕）：【第1段…／第2段…／第3段…】
-本段目标（这一段只完成一件事）：【待确认】
-上段尾帧：无（本段是第一段）
-主角：【主角外观＋体型参照物】
-开场钩子＝【本段开场3秒可见的动作】
-本段情节：【本段发生的事】
-结尾定格（本段最后一帧，留下一段要接的画面）：【待确认】
-台词（如有，日常口语，不说教）：“…”
-质感：【电影感实拍｜自然光＋浅景深】
-slogan与字卡后期贴，画面不渲字
-合规红线：不说治疗/改善/增强免疫力；画面不渲字`,
-
-b2: `品牌世界观片总长【30-60】秒【16:9】（拆【2】段，每段≤30秒，逐段生成后剪辑拼接，本次先写【第1段／共2段】）
-产品：百芙乐蓝莓后生元饮品
-世界观设定：【设定一句话，如：外星母星没有蓝色】
-本段目标（这一段只完成一件事）：【待确认】
-上段尾帧：无（本段是第一段）
-登场主体（每个主体一段外观定义，写明参照物）：【待确认】
-开场镜头（低角度＋参照物买尺度，不用“巨大/宏伟”这类词）＝【待确认】
-本段画面（按时间码切镜，每个时间码一个可见变化）：【待确认】
-结尾定格：【待确认】
-质感：【史诗实拍感｜体积光＋大气透视】
-slogan后期贴，画面不渲字
-合规红线：不说治疗/改善/增强免疫力；画面不渲字`,
-
-b3: `品牌溯源片总长【45-60】秒【16:9】（拆【2】段，每段≤30秒，逐段生成后剪辑拼接，本次先写【第1段／共2段】）
-产品：百芙乐蓝莓后生元饮品
-本段目标（这一段只完成一道工序）：【待确认】
-上段尾帧：无（本段是第一段）
-不变项（全程锁定，声明后不许变）：【同一车间／同一束顶光／同一身工服】
-讲解人：【讲解人外观；没有讲解人就写“无人出镜”】
-开场钩子＝【开场3秒可见的动作】
-工序链（一段一个工序，按空间顺序推进）：【待确认】
-结尾定格：【待确认】
-卖点怎么带出：【只留1个，不夸功效】
-质感：【纪录感实拍｜车间自然光】
-字卡后期贴，画面不渲字
-合规红线：不说治疗/改善类词；画面不渲字`,
-
-b4: `品牌沉浸带看【30】秒内单条【16:9】：第一人称一镜到底，一次不剪
-产品：百芙乐蓝莓后生元饮品
-本段目标（从哪到哪）：【待确认】
-上段尾帧：无（单条成片）
-相机载体（谁在走/飞，镜头运动全部由它推导）：【如：FPV穿越机】
-开场钩子＝【开场3秒的镜头动作】
-路线（按先后顺序，每个地点一个动作）：【待确认】
-结尾定格（本段最后一帧）：【待确认】
-穿帮红线：整条不切镜头；每个转场写明“镜头继续运动”；运动必须符合载体物理
-质感：【运动相机实拍｜轻微晃动】
-slogan后期贴，画面不渲字
-合规红线：不说治疗/改善/增强免疫力；画面不渲字`,
-
-b5: `品牌质感形象片【15-20】秒单条【9:16】：无人物出镜，产品是唯一主角
-产品：百芙乐蓝莓后生元饮品
-产品拆件：哑光自立袋，袋身偏紫罗兰、never纯蓝，白色螺旋盖，内容物深紫红、略稠带果肉感
-环境与布景：深灰石材台面＋一束侧逆光
-美学定调（开头写明，三选一）：【premium beauty-commercial／clean minimal／暗调高级感】
-前3秒钩子＝瓶身从画面上方落下、稳稳立住，瓶内液体晃出漩涡
-中段质感镜头（3-4个，一拍一种物理效果）：【光扫过瓶身／紫红液体冲入玻璃杯／杯壁冷凝水珠滑落】
-收尾：产品定格英雄帧，留干净空白区给后期字卡——画面不渲任何文字
-卖点（只贴字卡，不进画面）：【待确认】
-质感：【投放级广告感】
-合规红线：不说治疗/改善/增强免疫力；画面不渲字`,
-
-b6: `品牌人设口播总长【30-45】秒【9:16】（超过30秒拆2段逐段生成，本次先写【第1段／共1段】）
-产品：百芙乐蓝莓后生元饮品
-产品拆件：哑光自立袋，袋身偏紫罗兰、never纯蓝，白色螺旋盖，内容物深紫红、略稠带果肉感
-出镜人设：【出镜人设，如：32岁女营养师，素色针织】
-本段目标（这一段讲清哪件事）：【待确认】
-上段尾帧：无（单条成片）
-前3秒钩子＝【开场3秒可见的动作】
-讲什么：【品牌理念，不是卖点轰炸】
-台词（第一人称、像聊天分享不像宣言，例句）：“…”
-收尾：产品在画面里＋看镜头一句收束＋【引导语】
-卖点（最多带1个）：【待确认】
-质感：【手机实拍感】
-合规红线：不说治疗/改善/增强免疫力；画面不渲字`,
-
-k1: `科普原理讲解总长【180-240】秒【16:9】（拆【6-8】段，每段≤30秒，逐段生成后剪辑拼接，本次先写【第1段／共6段】）
-产品：百芙乐蓝莓后生元饮品
-主题：【整条讲什么，一句话】
-本段只讲一个知识点：【待确认】
-已讲过什么（本段不许重复）：无（本段是第一段）
-上段尾帧：无（本段是第一段）
-讲师：【讲师人设，如：32岁女营养师，素色针织】
-开场钩子＝【开场3秒可见的动作或一个反常识问句】
-本段讲法（现象→原理→结论，用类比不用术语）：【待确认】
-本段结论（一句人话，别下段说）：【待确认】
-台词（第一人称口语，例句）：“…”
-准确性红线：不承诺功效、不说“提高N倍”、不把体外实验说成人体效果
-画面不渲字，字卡后期贴`,
-
-k2: `科普过程演示总长【180-300】秒【16:9】（拆【6-10】段，一工序一段，每段≤30秒，本次先写【第1段／共8段】）
-产品：百芙乐蓝莓后生元饮品
-主题：【整条讲什么】
-本段只讲这一道工序：【待确认】
-已讲过什么（本段不许重复）：无（本段是第一段）
-上段尾帧：无（本段是第一段）
-不变项（场地/器材/光线全程锁定）：【同一车间／同一束顶光／同一身工服】
-讲师：【如有出镜写人设；没有就写“无人出镜”】
-开场钩子＝【开场3秒可见的动作】
-工序画面（按物理顺序推进，不跳步）：【待确认】
-本段结论（这道工序改变了什么）：【待确认】
-准确性红线：不跳过任何一步、不把“辅助步骤”说成“关键步骤”、不夸工艺参数
-画面不渲字，字卡后期贴`,
-
-k3: `科普辟谣总长【120-180】秒【16:9】（拆【4-6】段，一个误区一段，每段≤30秒，本次先写【第1段／共5段】）
-产品：百芙乐蓝莓后生元饮品
-本段要破的误区（原话）：【按原话说，别美化】
-已破过哪些（本段不许重复）：无（本段是第一段）
-上段尾帧：无（本段是第一段）
-讲师：【讲师人设】
-开场钩子＝【开场3秒，或直接把误区问出来】
-错误认知怎么立（先让人点头，再推翻）：【待确认】
-推翻的依据（一句人话＋一个可见证据）：【待确认】
-本段结论（给替代说法，别只否定）：【待确认】
-台词（第一人称口语，例句）：“…”
-准确性红线：不贬低任何同行/品类、不把“未证实”说成“已证实”、不制造恐慌
-画面不渲字，字卡后期贴`,
-
-k4: `科普问答总长【180-240】秒【16:9】（拆【6-8】段，一问一段，每段≤30秒，本次先写【第1段／共7段】）
-产品：百芙乐蓝莓后生元饮品
-主持人：【主持人外观与提问口吻】
-讲师：【讲师人设】
-本段问题（观众真会问的那句）：【待确认】
-已答过什么（本段不许重复）：无（本段是第一段）
-上段尾帧：无（本段是第一段）
-开场钩子＝【开场3秒，主持人先把问题问出来】
-问答节拍：问（≤8秒）→ 答（先给结论再解释）→ 追问（把观众的疑虑替他说出来）→ 收束一句
-说话语言：中文；两人不同时开口，答话的人看主持人不看镜头
-本段结论（一句人话）：【待确认】
-准确性红线：不承诺功效、不堆术语、被追问时不改口也不加码
-画面不渲字，字卡后期贴`,
-
-k5: `科普微观世界总长【120-180】秒【16:9】（拆【4-6】段，每段≤30秒，本次先写【第1段／共5段】）
-产品：百芙乐蓝莓后生元饮品
-主题：【整条讲什么】
-本段只拍一个微观过程：【待确认】
-已拍过什么（本段不许重复）：无（本段是第一段）
-上段尾帧：无（本段是第一段）
-画风（二选一，选定不许混）：写实微观特效（另一选：3D卡通拟人）
-主体定义（每个微观主体单独写外观＋尺度参照物）：【待确认】
-开场钩子＝【开场3秒可见的变化】
-本段过程（按时间码切镜，每个时间码一个可见变化）：【待确认】
-本段结论（这个过程对人意味着什么）：【待确认】
-准确性红线：不把体外实验说成人体效果、不虚构未证实机制、尺度必须给参照物
-画面不渲字，字卡后期贴`,
-
-k6: `科普数据拆解总长【90-150】秒【16:9】（拆【3-5】段，每段≤30秒，本次先写【第1段／共4段】）
-产品：百芙乐蓝莓后生元饮品
-产品拆件：哑光自立袋，袋身偏紫罗兰、never纯蓝，白色螺旋盖，内容物深紫红、略稠带果肉感
-本段拆的是（配料表／检测项／工艺参数）：【待确认】
-已拆过什么（本段不许重复）：无（本段是第一段）
-上段尾帧：无（本段是第一段）
-出镜方式：只出手与物件特写＋画外讲解，不露全脸
-开场钩子＝【开场3秒，手指已经点在那一行上】
-逐项拆解（手指一项一项指过去，每项配一句人话）：【待确认】
-字卡规则：每个数字一张字卡，标清“检出值／添加量／检测方法”，不写结论词
-本段结论（一句人话，不下功效判断）：【待确认】
-准确性红线：检出≠有效、不把含量当功效、不引用无出处数据
-画面不渲字，字卡后期贴`,
 };
-/* 每个拍法配一条可模仿的完整需求例子（以百芙乐蓝莓后生元为例）。
-   目的不是照抄，是让用户看到「这个拍法的需求该写成什么样、写哪些要素」 */
+
+/* 取模板：带货 8 类都是单条，直接取；长片走 /api/longform，不再有分段占位。 */
+function tplOf(k){
+  return TPL[k] || '';
+}
+/* 每个拍法配一条「模板的填好版」例子：字段、顺序、行数与 TPL 一一对应，
+   只是把【】全部换成具体内容（以百芙乐蓝莓后生元为例）。
+   目的：让你看到这个模板填完长什么样，照着改。 */
 const EX = {
-  t1: ['站桩口播', '带货口播20秒竖屏：营养师测评百芙乐蓝莓后生元饮；前3秒钩子＝拧盖「啵」一声液体涌出；卖点＝益生菌发酵花青素好吸收；收尾＝人拿产品看镜头说一句人话'],
-  t2: ['开箱', '带货开箱18秒竖屏：快递箱拆出百芙乐蓝莓后生元饮；拆箱→撕膜→拧盖→倒杯四步，每步配一个声音特写；收尾＝倒杯挂壁特写＋喝一口点头'],
-  t3: ['剧情', '带货剧情25秒竖屏：下午三点办公室犯困，同事递来一瓶百芙乐蓝莓后生元饮，主角半信半疑喝下眼睛一亮；产品只在「递」和「收尾」出现，不破戏'],
-  t4: ['Vlog', '带货Vlog 30秒竖屏：跟拍营养师一天——晨起空腹一杯→上午门诊→午后果园回访→晚上写笔记；产品自然出现在三个生活场景里，不专门讲解'],
-  t5: ['产品片', '带货产品片15秒竖屏：无人物；蓝莓从高处落进奶白液体溅起果汁浪花→瓶子从光雾中转出→收尾产品英雄帧；每个镜头只做一个物理效果'],
-  t6: ['ASMR', '带货ASMR 20秒竖屏：冰块碰杯声→拧盖「啵」→液体倒杯挂壁声→吸管搅动声；画面与声音一一配对，最后闭眼满足喝一口'],
-  t7: ['对比', '带货对比20秒竖屏：真人对镜头，左边普通果汁右边百芙乐；对比物＝泛化「普通果汁」不点名品牌；比配料表→比工艺→比喝完感受；收尾拿起右边那瓶'],
-  t8: ['反差', '带货反差18秒竖屏：同事以为她在喝高档果汁凑过来问，结果她拿出一瓶「给肠道菌群吃的」；包袱台词收尾＝「这不是饮料，是给菌吃的」'],
-  b1: ['品牌故事', '品牌故事片60秒16:9拆3段：第1段果农清晨进园；第2段营养师入镜讲坚持发酵的理由；第3段夕阳下灌装线收尾；主角＝营养师，外观用四视图参照'],
-  b2: ['世界观奇观', '品牌世界观30秒16:9：外星飞船掠过深空→俯冲进蓝莓果园，发酵罐像星云一样发光；主角＝外星人（银灰连体服、蓝灰皮肤）；slogan后期贴，画面不渲字'],
-  b3: ['溯源工艺', '品牌溯源45秒拆2段：第1段采摘→清洗→破碎；第2段密闭发酵罐→无菌灌装；一段一个工序不跳步；不变项＝全程同一条产线、同一批果'],
-  b4: ['沉浸带看', '品牌沉浸带看30秒16:9：第一人称FPV从果园上空俯冲落地→穿过果树→推开车间大门→掠过发酵罐；全程一镜到底不切镜头'],
-  b5: ['质感形象片', '品牌质感片15秒16:9：暗调打光；光扫过瓶身→倒杯时紫红液体旋涡→英雄帧定格留字卡区；卖点只贴字卡，画面不渲字'],
-  b6: ['人设口播', '品牌人设口播40秒拆2段：营养师对镜头讲「我们为什么坚持发酵21天」；理念为主不轰炸卖点；对白一句一个节拍，讲人话不讲广告词'],
-  k1: ['原理讲解', '科普原理片3-5分钟拆6-8段：营养师讲「发酵让花青素更好吸收」；递进①直接吸收率低②发酵释放更多③后生元入肠起效；红线＝不夸功效、不说「提高N倍」'],
-  k2: ['过程演示', '科普过程演示拆6段：投料→破碎→接种→发酵→检测→灌装；一段只讲一个工序，每段配一句「为什么这步不能少」'],
-  k3: ['辟谣纠错', '科普辟谣拆4段：先立「喝果汁＝吃水果」→用数据推翻→给替代说法→收尾一句人话总结；每段只破一个误区，不回头重复'],
-  k4: ['双人问答', '科普问答拆6段：主持人问「发酵到底改变了什么」，营养师答；一问一段；先把结论说出口再展开解释，答完追问一个反例'],
-  k5: ['微观世界', '科普微观世界拆4段：镜头钻进肠道，菌群把花青素拆成酚酸→代谢物进入血液；画风＝写实微观特效（也可换3D卡通拟人）；菌群造型全程一致'],
-  k6: ['数据拆解', '科普数据拆解拆3段：手指配料表逐项指过去，每项配一句人话；字卡标「检出值／添加量／检测方法」；本段结论一句人话，不下功效判断'],
+t1: ['站桩口播', `带货口播20秒【9:16】竖屏：真人测评百芙乐蓝莓后生元饮
+产品拆件：哑光自立袋、袋身偏紫罗兰（never纯蓝）、白色螺旋盖、内容物深紫红略稠带果肉感
+出镜人设：28岁女营养师，燕麦针织＋亚麻围裙
+核心卖点（只选1个）：整果打浆＋益生菌发酵，花青素更好吸收
+前3秒钩子＝拧盖「啵」一声，紫红液体涌出袋口特写
+中段演示：倒半杯对光看挂壁→喝一口回味→指袋身讲卖点
+收尾：产品独占画面一拍→人拿产品看镜头＋「想要肠道轻松的，试试这一口」
+她说话像聊天分享、不像广告，例句："喝完嘴里不齁，像蓝莓果泥很清爽"
+质感二选一：手机实拍测评感
+合规红线：不说治疗/改善/增强免疫力/通便；画面不渲字，价格卖点字卡后期贴`],
+t2: ['开箱', `带货开箱25秒【9:16】竖屏：手部特写开箱百芙乐蓝莓后生元饮
+产品拆件：牛皮纸快递箱＋哑光自立袋（偏紫罗兰）／白色螺旋盖／深紫红果汁
+出镜方式：只露手与半身，不露全脸；指甲干净、无饰品
+前3秒钩子＝划开封条「嗤啦」声＋箱盖翻开、袋装产品露出一角
+开箱序列（顺序不能乱）：划开封条→取出3袋→撕开单袋外膜→拿出产品→正反面各转一次给镜头
+中段演示：展示袋身→拧盖→倒出液体挂壁＋一句体感台词"倒出来比想象中稠，像果泥"
+收尾：3袋在桌面排成一排的全景→手拿起一袋转向镜头＋「办公室冰箱常备这个」
+他说话像聊天分享、不像广告，例句："不齁，像喝蓝莓果泥"
+质感二选一：手机实拍测评感
+合规红线：不说治疗/改善/增强免疫力/通便；袋面只说"有印刷"不指定文字；画面不渲字`],
+t3: ['剧情', `带货剧情28秒单条【9:16】竖屏
+产品：百芙乐蓝莓后生元饮＋产品拆件【哑光袋偏紫罗兰／白螺旋盖／深紫红果汁】
+场景设定：周三早7点半，厨房，女儿上学前手忙脚乱
+角色：32岁妈妈，低马尾、米色家居服；同一角色全片不换装
+前3秒钩子＝妈妈一手拎书包一手翻冰箱，什么都没找到
+产品怎么自然出现：拉开冰箱最下层顺手拿到→单手拧盖→仰头喝一口→长舒一口气
+卖点怎么带出来：镜头推近袋身（字后期贴），不打断剧情
+收尾：回到产品＋「忙的时候，至少这口是对的」
+台词像日常对话、不像广告，例句："先喝了这口再找红领巾"
+质感二选一：手机实拍测评感
+合规红线：不说治疗/改善/增强免疫力/通便；画面不渲字，价格卖点字卡后期贴`],
+t4: ['Vlog', `带货Vlog 28秒单条【9:16】竖屏
+产品：百芙乐蓝莓后生元饮＋产品拆件【哑光袋偏紫罗兰／白螺旋盖／深紫红果汁】
+主角人设：30岁新媒体运营，灰卫衣＋棒球帽
+拍摄风格：手持跟拍、自然光、轻微晃动与对焦漂移（手机实拍感，不要电影感）
+时间线3个片段（每段8秒左右）：07:20出门前→12:40工位下午→18:30回家路上
+产品出现位置：中段自然入镜，方式：从包里掏出
+台词方式：前半段旁白式自言自语（"今天又是三场会"），产品出现时转成对口播一句
+收尾：回到桌面，产品在旁边，镜头缓缓停下＋「下午不点奶茶了，就喝这个」
+说人话、别广告腔，例句："一口下去像吃了小半盒蓝莓"
+合规红线：不说治疗/改善/增强免疫力/通便；画面不渲字`],
+t5: ['产品片', `带货产品片20秒【9:16】竖屏：无人物出镜
+产品：百芙乐蓝莓后生元饮
+产品拆件：哑光自立袋、袋身偏紫罗兰（never纯蓝）、白色螺旋盖、内容物深紫红略稠带果肉感
+环境与布景：深灰石材台面＋一束侧逆光
+美学词（开头定调）：暗调高级感
+前3秒钩子＝袋身从上方落下、稳稳立住，袋内液体晃出漩涡
+中段质感镜头（3-4个，一拍一种物理效果）：光扫过哑光袋身／紫红液体冲入玻璃杯／杯壁冷凝水珠滑落
+收尾：产品定格英雄帧，留干净空白区给后期字卡——画面不渲任何文字
+合规红线：不说任何功效词；画面不渲字，价格卖点字卡后期贴`],
+t6: ['ASMR', `带货ASMR 20秒【9:16】竖屏：只出手部与近景，不露全脸
+产品：百芙乐蓝莓后生元饮＋哑光袋偏紫罗兰／白螺旋盖／深紫红果汁带果肉感（挂壁明显）
+镜头：微距/探针镜头感，浅景深，声音优先
+画面-声音配对（铁律：一拍一个可见变化＋一个配套声音）：
+ 1 手指扣住螺旋盖→拧开「啵」的一声
+ 2 液体倒进玻璃杯→连续的「咕咚」流淌声
+ 3 端起杯对光轻转→液体挂壁的细微黏稠声
+ 4 喝一口→吞咽声＋轻轻呼气
+ 5 杯壁冷凝水珠滑落→极轻的水滴声
+卖点带出：最后一句体感台词"不齁，咽下去有回甘"
+收尾：空杯＋桌上一滴水痕，静一秒
+台词像聊天、不像广告
+合规红线：不说治疗/改善/增强免疫力/通便；不出现夸张功效反应（如捂肚子）；画面不渲字`],
+t7: ['对比', `带货对比25秒【9:16】竖屏：真人对镜头做对比测评百芙乐蓝莓后生元饮
+产品拆件：本方哑光袋偏紫罗兰；对比物：市面常见果汁饮料一杯，不点名任何品牌
+出镜人设：28岁女营养师，燕麦针织＋亚麻围裙
+前3秒钩子＝两杯并置，一杯浑浊一杯清透，手指依次点过去＋一声轻敲玻璃
+对比维度（3个以内）：颜色与挂壁质地／配料表（字后期贴）／喝后口腔感受
+中段演示：左右手各拿一杯→同时倒出→并置对比→喝本方产品→点头回味
+收尾：只举起本方产品看镜头＋「我更愿意选发酵的这一杯」
+她说话像聊天分享、不像广告，例句："这杯喝完嘴里不齁"
+质感二选一：手机实拍测评感
+合规红线：不点名不贬低任何竞品、不做功效对比；画面不渲字，配料表字卡后期贴`],
+t8: ['反差', `带货反差总长20秒【9:16】竖屏：一个包袱的短视频，产品是包袱落点
+产品：百芙乐蓝莓后生元饮＋哑光袋偏紫罗兰／白螺旋盖／深紫红果汁
+角色：28岁女白领，低马尾素色衬衫，表演一本正经、不夸张扮丑
+前3秒钩子＝她把一袋深紫色饮品倒进高脚杯，表情像在喝红酒
+铺垫：同事以为她在喝什么高级货，凑过来问
+包袱（第10秒）＝她淡淡说"蓝莓后生元，公司冰箱拿的"
+产品露出方式：包袱落点处产品举起来在画面正中
+收尾：产品特写一拍＋一句反转台词"养生这件事，从冰箱开始"
+表演纪律：镜头稳、光正常、动作克制（荒诞感来自设定，不来自浮夸表演）
+质感二选一：手机实拍测评感
+合规红线：不拿身体状况/疾病开玩笑；不说治疗/改善类词；画面不渲字`],
 };
 
 function showEx(k){
@@ -1901,7 +1867,7 @@ function hideEx(){
 }
 
 function fillTpl(k){
-  const t = TPL[k];
+  const t = tplOf(k);
   if(!t){ toast('模板加载失败'); return; }
   /* 从底栏换模板 = 换了个新需求，别再沿用上一轮的带货形式 */
   PICK_FORM = null; PENDING = null; PICKPLAN = null;
@@ -1910,15 +1876,345 @@ function fillTpl(k){
   toast('模板已填入 · 把【】里的内容换成你的，再发送');
 }
 
-/* 品牌 / 科普按钮：填模板的同时记住形式（b1~b6 / k1~k6），
-   下一次回车就直接进第 2 轮算技能组合 —— 和带货点按钮选型后的流程一致 */
-function fillPreset(k){
-  const t = TPL[k];
-  if(!t){ toast('模板加载失败'); return; }
-  PICK_FORM = k; TPLROUTE = null; PENDING = null; PICKPLAN = null;
-  hidePickBar(); hideTplBar();
-  fill(t); showEx(k);
-  toast('模板已填入 · 把【】里的内容换成你的，再按回车');
+/* ============================== 长片流程（品牌 / 科普） ==============================
+   设定卡 → 拆段 → 配主角 → 出提示词。四步在同一个面板里切换。
+   只有「段表」是必须停的（段分错后面全错）；主角可以一键认。
+   出提示词时逐段调 /api/stream（forced = 该段主角+底座），串行跑，不并发。
+*/
+const LF = {
+  kind:'brand', theme:'', seconds:60, setting:{}, segs:[], step:1,
+  prompts:[], heroes:[], baseCn:{}, warnings:[], note:''
+};
+const LF_LABEL = { brand:'品牌片', kepu:'科普片' };
+const LF_STEPS = { 1:'① 设定 · 拆段', 2:'② 段表', 3:'③ 主角', 4:'④ 提示词' };
+
+function escAttr(v){
+  return String(v==null?'':v).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+async function openLong(kind, theme, sec){
+  LF.kind = (kind === 'kepu') ? 'kepu' : 'brand';
+  LF.theme = theme || '';
+  LF.seconds = sec || (LF.kind === 'kepu' ? 180 : 60);
+  LF.setting = {}; LF.segs = []; LF.prompts = []; LF.warnings = []; LF.note = ''; LF.step = 1;
+  document.getElementById('lfbar').className = 'lfbar show';
+  lfRender();
+  try{
+    const r = await fetch('/api/longform/meta?kind=' + LF.kind);
+    const d = await r.json();
+    LF.setting = d.setting || {};
+    LF.heroes = d.heroes || [];
+    LF.baseCn = d.base_cn || {};
+    lfRender();
+  }catch(e){ toast('读设定失败：' + e.message); }
+}
+
+function closeLong(){
+  document.getElementById('lfbar').className = 'lfbar';
+}
+
+function lfRender(){
+  const bar = document.getElementById('lfbar');
+  if(!bar.classList.contains('show')) return;
+  const seg = LF.segs.length ? ` · ${LF.segs.length} 段` : '';
+  bar.innerHTML = `
+    <div class="lfhead"><b>${LF_LABEL[LF.kind]}</b>
+      <span class="lfstep">${LF_STEPS[LF.step]}${seg}</span>
+      <span class="lfclose" onclick="closeLong()">✕</span></div>
+    <div class="lfbody">${LF.step===1?lfS1():LF.step===2?lfS2():LF.step===3?lfS3():lfS4()}</div>`;
+}
+
+function lfS1(){
+  const s = LF.setting || {};
+  const f = k => `<div class="lfrow"><label>${k}</label>
+      <input type="text" id="lfs_${k}" value="${escAttr(s[k]||'')}"></div>`;
+  /* 时长：常用值列出来，但用户从输入框里带的任意秒数（如 200）也要能选中 */
+  let secs = [30,45,60,75,90,120,150,180,240,300];
+  if(LF.seconds && secs.indexOf(LF.seconds) < 0) secs = secs.concat([LF.seconds]).sort((a,b)=>a-b);
+  return `
+    <div class="lfrow"><label>主题</label>
+      <input type="text" id="lf_theme" value="${escAttr(LF.theme)}" placeholder="一句话说这条片子讲什么"></div>
+    <div class="lfrow"><label>总时长</label>
+      <select id="lf_sec">${secs.map(v=>`<option value="${v}"${v===LF.seconds?' selected':''}>${v} 秒</option>`).join('')}</select>
+      <span class="lfsum" style="margin:0">一次生成最多 30 秒，超了自动拆段</span></div>
+    <details style="margin:8px 0 2px"><summary style="cursor:pointer;font-size:11.5px;color:#6b7686">
+      全片设定（每段共用，填一次就够）</summary>
+      <div style="margin-top:7px">${f('产品')}${f('拆件')}${f('画风')}${f('主角')}${f('不变项')}${f('红线')}</div>
+    </details>
+    <div class="lfacts">
+      <button class="lfbtn pri" onclick="lfPlan(this)">拆段 →</button>
+      <span class="lfsum" style="margin:0">「品牌 / 科普」只是语境，拆几段、每段拍什么交给模型</span>
+    </div>`;
+}
+
+async function lfPlan(btn){
+  const th = document.getElementById('lf_theme');
+  LF.theme = (th.value || '').trim();
+  if(!LF.theme){ toast('先写一句主题'); th.focus(); return; }
+  const setting = {};
+  ['产品','拆件','画风','主角','不变项','红线'].forEach(k=>{
+    const el = document.getElementById('lfs_' + k);
+    if(el) setting[k] = el.value.trim();
+  });
+  LF.setting = setting;
+  LF.seconds = parseInt(document.getElementById('lf_sec').value, 10) || 60;
+  btn.disabled = true; btn.innerHTML = '<span class="lfspin"></span> 正在拆段…';
+  try{
+    const r = await fetch('/api/longform/plan', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({kind:LF.kind, theme:LF.theme, seconds:LF.seconds, setting:LF.setting})
+    });
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.detail || ('HTTP ' + r.status));
+    LF.segs = (d.segments || []).map(x=>({...x}));
+    LF.setting = d.setting || LF.setting;
+    LF.note = d.note || '';
+    LF.step = 2; lfRender();
+    if(d.source !== 'model') toast('模型没连上，用了等分兜底，段内容要手动改');
+  }catch(e){
+    btn.disabled = false; btn.textContent = '拆段 →';
+    toast('拆段失败：' + e.message);
+  }
+}
+
+function lfS2(){
+  const rows = LF.segs.map((s,i)=>`
+    <div class="lfseg">
+      <div class="lfs1"><span class="lfno">${i+1}</span>
+        <input type="text" value="${escAttr(s.title||'')}" oninput="lfUpd(${i},'title',this.value)"
+               style="max-width:170px" placeholder="段名">
+        <span class="lft">${s.sec||12} 秒</span>
+        <span class="lfdel" onclick="lfDel(${i})" title="删掉这一段">✕</span></div>
+      <textarea oninput="lfUpd(${i},'content',this.value)"
+        placeholder="这一段发生什么（写看得见的动作或画面）">${escapeHtml(s.content||'')}</textarea>
+      <div class="lfs1" style="margin:5px 0 0"><span class="lft" style="margin-left:0">时长</span>
+        <input type="number" min="5" max="30" value="${s.sec||12}" style="width:74px"
+               oninput="lfUpd(${i},'sec',parseInt(this.value||0,10))">
+        <span class="lft">秒（5–30）</span></div>
+    </div>`).join('');
+  const total = LF.segs.reduce((a,s)=>a+(s.sec||0),0);
+  return `
+    ${LF.note?`<div class="lfwarn">${escapeHtml(LF.note)}</div>`:''}
+    ${rows}
+    <div class="lfacts" style="margin-top:2px">
+      <button class="lfbtn" onclick="lfAdd()">+ 加一段</button>
+      <span class="lfsum" style="margin:0">合计 <b id="lf_total">${total}</b> 秒 / 目标 ${LF.seconds} 秒</span>
+    </div>
+    <div class="lfacts">
+      <button class="lfbtn pri" onclick="lfAssign(this)">配主角 →</button>
+      <button class="lfbtn" onclick="LF.step=1;lfRender()">← 改设定</button>
+      <span class="lfsum" style="margin:0">段分错了后面全错，这一步值得多看两眼</span>
+    </div>`;
+}
+
+function lfUpd(i,k,v){
+  if(!LF.segs[i]) return;
+  LF.segs[i][k] = v;
+  if(k === 'sec'){
+    const t = document.getElementById('lf_total');
+    if(t) t.textContent = LF.segs.reduce((a,s)=>a+(s.sec||0),0);
+  }
+}
+
+function lfDel(i){
+  LF.segs.splice(i,1);
+  LF.segs.forEach((s,n)=>{ s.i = n+1; });
+  lfRender();
+}
+
+function lfAdd(){
+  LF.segs.push({ i:LF.segs.length+1, title:'新段', content:'', sec:12, kind:LF.kind });
+  lfRender();
+}
+
+async function lfAssign(btn){
+  const empty = LF.segs.filter(s=>!(s.content||'').trim());
+  if(empty.length){ toast('有 ' + empty.length + ' 段还没写内容'); return; }
+  btn.disabled = true; btn.innerHTML = '<span class="lfspin"></span> 正在分配镜头逻辑…';
+  try{
+    const r = await fetch('/api/longform/assign', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({kind:LF.kind, theme:LF.theme, segments:LF.segs, setting:LF.setting})
+    });
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.detail || ('HTTP ' + r.status));
+    LF.segs = d.segs || [];
+    LF.warnings = d.warnings || [];
+    LF.step = 3; lfRender();
+    if(d.source === 'fallback') toast('模型没连上，主角是按关键词猜的，建议逐段确认');
+  }catch(e){
+    btn.disabled = false; btn.textContent = '配主角 →';
+    toast('配主角失败：' + e.message);
+  }
+}
+
+function lfS3(){
+  const rows = LF.segs.map((s,i)=>{
+    const n = s.i || i+1;
+    const opts = (LF.heroes||[]).map(h=>
+      `<option value="${h.name}"${h.name===s.hero?' selected':''}>${h.cn}</option>`).join('');
+    const bases = (s.base||[]).map(b=>
+      `<i>${escapeHtml((LF.baseCn||{})[b] || b)}</i>`).join('');
+    const miss = (s.missing||[]).length
+      ? `<div class="lfwarn" style="margin:5px 0 0">这些技能没加载到：${escapeHtml((s.missing||[]).join('、'))}</div>` : '';
+    return `<div class="lfseg">
+      <div class="lfs1"><span class="lfno">${n}</span>
+        <span style="font-size:12px;color:var(--fg)">${escapeHtml(s.title||'')}</span>
+        <span class="lft">${s.sec||12} 秒</span></div>
+      <div class="lfrow" style="margin:0">
+        <select onchange="lfHero(${n}, this.value)">${opts}</select>
+        <span class="lfsum" style="margin:0;font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+          ${escapeHtml((s.content||'').slice(0,42))}…</span>
+      </div>
+      <div class="lfwhy">${escapeHtml(s.why||'')}</div>
+      ${bases?`<div class="lfbase">另补：${bases}</div>`:''}
+      ${miss}
+    </div>`;
+  }).join('');
+  const warn = (LF.warnings||[]).map(w=>`<div class="lfwarn">⚠ ${escapeHtml(w)}</div>`).join('');
+  const total = LF.segs.length;
+  return `${warn}${rows}
+    <div class="lfacts">
+      <button class="lfbtn pri" onclick="lfGen([1,2].filter(n=>n<=${total}), this)">出前 2 段 →</button>
+      <button class="lfbtn" onclick="lfGen(LF.segs.map(s=>s.i||0), this)">全部 ${total} 段一起出</button>
+      <button class="lfbtn" onclick="LF.step=2;lfRender()">← 改段表</button>
+    </div>
+    <div class="lfsum" style="margin-top:6px">先出前 2 段试水：风格对了再出剩下的，省得后面全白写</div>`;
+}
+
+/* 手改某段主角：只做一条联动 —— 一镜到底不该再挂时间轴分镜 */
+function lfHero(n, hero){
+  const s = LF.segs.find(x=>(x.i||0) === n);
+  if(!s) return;
+  s.hero = hero;
+  const h = (LF.heroes||[]).find(x=>x.name === hero);
+  s.hero_cn = h ? h.cn : hero;
+  const TL = 'seedance-timeline-shot-script';
+  s.base = (s.base||[]).filter(b=>b !== TL);
+  if(hero !== 'seedance-pov-continuous-take') s.base.unshift(TL);
+  s.skills = [hero, ...s.base];
+  toast('已换成「' + s.hero_cn + '」');
+}
+
+async function lfGen(idxs, btn){
+  idxs = (idxs||[]).filter(n=>n>0);
+  if(!idxs.length) return;
+  if(btn){ btn.disabled = true; btn.innerHTML = '<span class="lfspin"></span> 正在逐段写…'; }
+  try{
+    const r = await fetch('/api/longform/prompt', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({kind:LF.kind, segments:LF.segs, setting:LF.setting, indexes:idxs})
+    });
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.detail || ('HTTP ' + r.status));
+    LF.prompts = (d.prompts || []).map(p=>({...p, out:'', state:'wait'}));
+  }catch(e){
+    if(btn){ btn.disabled = false; btn.textContent = '重试'; }
+    toast('准备模板失败：' + e.message);
+    return;
+  }
+  LF.step = 4; lfRender();
+  for(const p of LF.prompts){
+    await lfGenOne(p);
+    lfRender();
+  }
+}
+
+async function lfGenOne(p){
+  p.state = 'run'; lfRender();
+  try{
+    p.out = await genSegment(p.text, p.skills || []);
+    p.state = 'done';
+  }catch(e){
+    p.out = '生成失败：' + e.message;
+    p.state = 'err';
+  }
+}
+
+/* 单段生成：调同一个 /api/stream，技能用 forced（该段主角+底座），
+   拿 revision.revised 优先、其次 generate.content —— 和主流程交付物一致 */
+async function genSegment(text, skills){
+  const resp = await fetch('/api/stream', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ message:text, skills:skills.length?skills:null, do_lint:true, history:null, last_skills:null })
+  });
+  if(!resp.ok){
+    const e = await resp.json().catch(()=>({}));
+    throw new Error(e.detail || ('HTTP ' + resp.status));
+  }
+  const reader = resp.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '', out = '', err = '';
+  while(true){
+    const {done, value} = await reader.read();
+    if(done) break;
+    buf += dec.decode(value, {stream:true});
+    const parts = buf.split('\n\n'); buf = parts.pop();
+    for(const line of parts){
+      if(!line.startsWith('data:')) continue;
+      let ev; try{ ev = JSON.parse(line.slice(5).trim()); }catch(ignore){ continue; }
+      if(ev.stage === 'error') err = ev.message || '生成失败';
+      if(ev.stage === 'done'){
+        const r = ev.result || {};
+        if(r.revision && r.revision.revised) out = r.revision.revised;
+        else if(r.generate && r.generate.content) out = r.generate.content;
+        else if(!r.generate) err = r.message || '模型没选出技能';
+      }
+    }
+  }
+  if(!out && err) throw new Error(err);
+  if(!out) throw new Error('没拿到内容');
+  return unfence(out);
+}
+
+function lfS4(){
+  const cards = LF.prompts.map((p,i)=>`
+    <div class="lfcard">
+      <div class="lfc1">
+        <span class="lfno">${p.i}</span>
+        <b>${escapeHtml(p.title||'')}</b>
+        <span style="color:#5a6474">${p.sec} 秒 · ${escapeHtml(p.hero_cn||'')}</span>
+        <span class="lfcp">
+          ${p.state==='run'?'<span class="lfspin"></span>':''}
+          ${p.state==='done'?'<span class="lfdone">✓ 已生成</span>':''}
+          <button class="lfbtn" onclick="lfCopy(${i},this)" ${p.out?'':'disabled'}>复制</button>
+        </span>
+      </div>
+      <textarea id="lfp_${i}" oninput="LF.prompts[${i}].out=this.value">${escapeHtml(p.out||p.text||'')}</textarea>
+    </div>`).join('');
+  const done = LF.prompts.filter(p=>p.state==='done').length;
+  return `${cards}
+    <div class="lfacts">
+      <button class="lfbtn" onclick="LF.step=3;lfRender()">← 改主角</button>
+      <button class="lfbtn" onclick="lfCopyAll(this)">全部复制（${done}/${LF.prompts.length} 已生成）</button>
+    </div>
+    <div class="lfsum" style="margin-top:6px">每条都能直接改；复制后逐条丢进生成平台，按段号顺序生成</div>`;
+}
+
+function lfCopy(i, btn){
+  const p = LF.prompts[i];
+  if(!p) return;
+  copyRaw(p.out || '', btn);
+}
+
+function lfCopyAll(btn){
+  const all = LF.prompts.map(p=>p.out).filter(Boolean).join('\n\n────────\n\n');
+  if(!all){ toast('还没有生成好的内容'); return; }
+  copyRaw(all, btn);
+}
+
+function copyRaw(text, btn){
+  const done = () => { if(btn){ btn.textContent='已复制 ✓'; setTimeout(()=>{ btn.textContent='复制'; }, 1500);} };
+  const fb = () => {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.select();
+    try{ document.execCommand('copy'); done(); }catch(e){ toast('复制失败，手动选中吧'); }
+    ta.remove();
+  };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done).catch(fb);
+  }else{ fb(); }
 }
 
 /* ============================== 带货选型（「带货：」前缀） ============================== */

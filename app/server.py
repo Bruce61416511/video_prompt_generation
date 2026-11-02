@@ -35,6 +35,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .agent import SKILL_LAYERS, Agent, LLMConfig
+from .longform import (
+    BASE_CN,
+    HERO_POOL,
+    KIND_LABEL,
+    SETTING_DEFAULTS,
+    assign_segments,
+    plan_segments,
+    render_segment,
+)
 from .offer_forms import MAX_BASE, SKILL_MAP
 from .offer_router import route as route_offer
 from .skill_loader import SkillLoader
@@ -144,6 +153,118 @@ class PickRequest(BaseModel):
     """第 2 轮：拿模板正文算出技能组合，只算不写。"""
     text: str
     form: str | None = None      # 第 1 轮判出来的形式（带货 t1~t8 / 品牌 b1~b6 / 科普 k1~k6），有就按它定主角
+
+
+# ---------------------------------------------------------------- 长片三步（品牌/科普）
+# 2026-11-02 重构：旧的 b1~b6 / k1~k6 十二分类废弃（层级错位：那是段型不是片型）。
+# 新流程 = 设定卡 → 拆段 → 配主角 → 逐段出提示词。三个端点对应前三个动作，
+# 最后一个动作由前端逐段调 /api/stream（forced=主角+底座），生成链完全复用。
+
+class LongPlanRequest(BaseModel):
+    kind: str = "brand"            # brand | kepu
+    theme: str
+    seconds: int = 60
+    setting: dict | None = None    # 用户改过的设定卡；不传就用默认值
+
+
+class LongAssignRequest(BaseModel):
+    kind: str = "brand"
+    theme: str = ""
+    segments: list[dict]          # 用户确认后的段表（content/sec 可能被改过）
+    setting: dict | None = None
+
+
+class LongPromptRequest(BaseModel):
+    kind: str = "brand"
+    segments: list[dict]          # 已带 hero/base 的段表
+    setting: dict | None = None
+    indexes: list[int] | None = None   # 只出这几段（1-based）；不传=全出
+
+
+def _setting_of(req_setting: dict | None, kind: str) -> dict:
+    base = dict(SETTING_DEFAULTS.get(kind, SETTING_DEFAULTS["brand"]))
+    if req_setting:
+        base.update({k: v for k, v in req_setting.items() if str(v).strip()})
+    return base
+
+
+@app.get("/api/longform/meta")
+def longform_meta(kind: str = "brand"):
+    """前端渲染设定卡和主角下拉用：默认设定 + 主角池 + 底座中文名。"""
+    return {
+        "kind": kind,
+        "label": KIND_LABEL.get(kind, "品牌片"),
+        "setting": _setting_of(None, kind),
+        "heroes": [{"name": k, "cn": v["cn"], "use": v["use"]} for k, v in HERO_POOL.items()],
+        "base_cn": BASE_CN,
+    }
+
+
+@app.post("/api/longform/plan")
+def longform_plan(req: LongPlanRequest):
+    """步 0+1：给出设定卡默认值，并把主题拆成段表。"""
+    kind = req.kind if req.kind in SETTING_DEFAULTS else "brand"
+    setting = _setting_of(req.setting, kind)
+    theme = (req.theme or "").strip()
+    if not theme:
+        raise HTTPException(400, "先说一句这条片子要讲什么")
+    try:
+        res = plan_segments(
+            kind, theme, req.seconds, setting,
+            client=(agent.client if cfg.api_key else None), model=cfg.model,
+        )
+    except Exception as e:                          # noqa: BLE001
+        raise HTTPException(500, f"拆段失败：{e}") from e
+    return {"kind": kind, "label": KIND_LABEL.get(kind, ""), "setting": setting, **res}
+
+
+@app.post("/api/longform/assign")
+def longform_assign(req: LongAssignRequest):
+    """步 2：模型从池里给每段选主角（带理由），底座按规则强制挂。"""
+    kind = req.kind if req.kind in SETTING_DEFAULTS else "brand"
+    setting = _setting_of(req.setting, kind)
+    segs = [s for s in (req.segments or []) if str(s.get("content") or "").strip()]
+    if not segs:
+        raise HTTPException(400, "段表是空的")
+    try:
+        res = assign_segments(
+            kind, req.theme, segs, setting,
+            client=(agent.client if cfg.api_key else None), model=cfg.model,
+        )
+    except Exception as e:                          # noqa: BLE001
+        raise HTTPException(500, f"配主角失败：{e}") from e
+    # 只保留仍在技能库里的，避免映射到已删除的目录
+    for s in res["segs"]:
+        s["skills"] = [n for n in s.get("skills", []) if n in loader.skills]
+        s["missing"] = [n for n in [s.get("hero")] + s.get("base", []) if n not in loader.skills]
+    return res
+
+
+@app.post("/api/longform/prompt")
+def longform_prompt(req: LongPromptRequest):
+    """步 3：逐段渲染填空模板（不调模型）。真正的提示词由前端调 /api/stream 生成。"""
+    kind = req.kind if req.kind in SETTING_DEFAULTS else "brand"
+    setting = _setting_of(req.setting, kind)
+    segs = req.segments or []
+    if not segs:
+        raise HTTPException(400, "段表是空的")
+    want = set(req.indexes or [s.get("i") for s in segs])
+    out = []
+    for s in segs:
+        if s.get("i") not in want:
+            continue
+        out.append(
+            {
+                "i": s.get("i"),
+                "title": s.get("title", ""),
+                "sec": s.get("sec", 12),
+                "hero": s.get("hero", ""),
+                "hero_cn": s.get("hero_cn", ""),
+                "skills": s.get("skills", []),
+                "text": render_segment(kind, s, segs, setting),
+            }
+        )
+    return {"kind": kind, "prompts": out}
 
 
 # ---------------------------------------------------------------- 接口
