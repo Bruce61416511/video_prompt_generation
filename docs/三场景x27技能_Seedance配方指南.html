@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>27 技能使用手册 · Seedance 提示词配方体系 v2</title>
+<style>
+  :root{
+    --bg:#f6f7fb; --card:#ffffff; --ink:#1c2333; --sub:#5a6478; --line:#e4e8f0;
+    --brand:#4f5bd5; --brand-soft:#eef0ff; --ok:#1a9a6c; --ok-soft:#e7f7f0;
+    --warn:#c77700; --warn-soft:#fff4e0; --hot:#d5436c; --hot-soft:#ffeef2;
+    --mono:Consolas,"Courier New",monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;background:var(--bg);color:var(--ink);line-height:1.7;padding:32px 16px 80px}
+  .wrap{max-width:980px;margin:0 auto}
+  header{margin-bottom:28px}
+  h1{font-size:26px;margin-bottom:6px}
+  .meta{color:var(--sub);font-size:13px}
+  h2{font-size:20px;margin:36px 0 14px;padding-left:12px;border-left:4px solid var(--brand)}
+  h3{font-size:16px;margin:20px 0 8px}
+  p{margin:8px 0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin:14px 0}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin:10px 0}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:var(--brand-soft);font-weight:600;white-space:nowrap}
+  code{font-family:var(--mono);background:#eef1f6;border-radius:4px;padding:1px 5px;font-size:12.5px;color:#334}
+  .tag{display:inline-block;border-radius:999px;padding:2px 10px;font-size:12px;margin:2px 4px 2px 0;font-weight:600}
+  .t-main{background:var(--hot-soft);color:var(--hot)}
+  .t-base{background:var(--brand-soft);color:var(--brand)}
+  .t-flavor{background:var(--warn-soft);color:var(--warn)}
+  .pill{display:inline-block;background:var(--ok-soft);color:var(--ok);border-radius:6px;padding:1px 8px;font-size:12px;font-weight:600;margin-right:6px}
+  .note{background:var(--brand-soft);border-radius:8px;padding:12px 16px;font-size:14px;margin:10px 0}
+  .rule{background:var(--card);border-left:4px solid var(--ok);border-radius:0 8px 8px 0;padding:10px 16px;margin:10px 0;font-size:14px}
+  ol.steps{counter-reset:s;list-style:none;margin:12px 0}
+  ol.steps>li{position:relative;padding:12px 16px 12px 56px;background:var(--card);border:1px solid var(--line);border-radius:10px;margin:10px 0}
+  ol.steps>li::before{counter-increment:s;content:counter(s);position:absolute;left:14px;top:12px;width:28px;height:28px;border-radius:50%;background:var(--brand);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center}
+  .k{color:var(--brand);font-weight:700}
+  .small{font-size:12.5px;color:var(--sub)}
+  footer{margin-top:48px;color:var(--sub);font-size:12px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>27 技能使用手册 · Seedance 提示词配方体系 <span class="small">v2</span></h1>
+  <div class="meta">基于 awesome-seedance 全量 27 个场景模板（23 主角 + 4 底座）｜ 含三场景落地配方 ｜ 2026-11-02 整理</div>
+</header>
+
+<h2>〇、先理清数字</h2>
+<div class="card">
+  <p>上游 awesome-seedance 共 <b>27 个场景模板</b>（<code>docs/templates/en/</code> 全量目录；其中 13 篇被打包成 <code>agents/skills/</code> 技能，14 篇只有文档），另有 <b>2 个非场景工具</b>（<code>production-workflow</code> 生产流程、<code>prompt-library</code> 模板总索引）。找模板<b>优先翻 27 篇全量目录</b>，只看技能包目录会漏 14 个。</p>
+</div>
+
+<h2>一、心法：27 个不是 27 个平等选项</h2>
+<div class="card">
+  <p>它们分两种角色：</p>
+  <p><span class="pill">23 个主角</span> 决定片型 —— <b>一条提示词只选 1 个当骨架</b>。</p>
+  <p><span class="pill">4 个底座</span> 技术件 —— 被主角借用，按需叠 1~3 个。</p>
+  <div class="note">用不好的最大原因是<b>混骨架</b>：把两个主角的结构各抄一半，模型两头不讨好。正确姿势永远是「1 主角 + N 底座」。</div>
+</div>
+
+<h2>二、23 个主角速查表（按"拍什么"选）</h2>
+
+<div class="card">
+  <h3>产品 / 商业向（7 个）</h3>
+  <table>
+    <tr><th>技能</th><th>什么时候用</th><th>核心机制一句话</th></tr>
+    <tr><td><code>product-commercial-shotlist</code></td><td>投放级产品广告（美妆/饮品/珠宝/汽车）</td><td>美学词定调 → 英雄产品拆件 → 计时/编号分镜 → 关键词堆尾</td></tr>
+    <tr><td><code>ugc-creator-review</code></td><td>真人口播测评带货 / 开箱 / 种草</td><td>人锁+产品锁分离；台词焊进动作那一秒；收尾两拍：产品独占画面 → 人拿产品看镜头</td></tr>
+    <tr><td><code>food-asmr</code></td><td>美食饮品特写 / 吃播 ASMR</td><td>每拍一个食物可见变化 + 一个配套声音；菜品从首帧到末帧不能变</td></tr>
+    <tr><td><code>fashion-lookbook</code></td><td>穿搭美妆人像写真</td><td>一套头到脚外观锁扛全片；每场景一个地点 + 一个手势 + 一种光</td></tr>
+    <tr><td><code>car-vehicle</code></td><td>汽车 / 载具速度感</td><td>载具逐部件锁死 + 每秒换一次机位的编号切单</td></tr>
+    <tr><td><code>game-ui-livestream</code></td><td>屏幕录制 / 游戏实机 / 直播假画面</td><td>画面即镜头；HUD 叠层钉死固定位置，数字横幅随动作同步变化</td></tr>
+    <tr><td><code>pet-animal</code></td><td>宠物动物当主角</td><td>锁死"只有一只"；动物必须像动物；payoff 靠它凑近镜头</td></tr>
+  </table>
+
+  <h3>叙事 / 剧情向（4 个）</h3>
+  <table>
+    <tr><th>技能</th><th>什么时候用</th><th>核心机制一句话</th></tr>
+    <tr><td><code>cinematic-narrative-short</code></td><td>15–60s 多幕叙事短片</td><td>标题分幕 + 角色卡前置 + 揭晓写成具体画面（不是"惊喜承诺"）</td></tr>
+    <tr><td><code>meme-comedy</code></td><td>反转结尾沙雕短片</td><td>每一拍都为同一个包袱服务；物理和镜头一本正经，荒诞才成立</td></tr>
+    <tr><td><code>horror-suspense</code></td><td>恐怖悬疑短片</td><td>每拍一个身体可见变化；恐惧来自链条（眼神→血管→咬→下一个人）；结尾封门不解答</td></tr>
+    <tr><td><code>handheld-ugc-vlog</code></td><td>手机 Vlog 真实质感</td><td>指定相机型号 + 把缺陷写成需求清单，手动关掉电影感</td></tr>
+  </table>
+
+  <h3>风格 / 形式向（6 个）</h3>
+  <table>
+    <tr><th>技能</th><th>什么时候用</th><th>核心机制一句话</th></tr>
+    <tr><td><code>3d-cartoon</code></td><td>3D 卡通角色短片</td><td>外观逐部件写；风格写成可度量的渲染参数；每块时间轴只装一个动作目标</td></tr>
+    <tr><td><code>anime-style-lock</code></td><td>二次元 / 动漫画风锁定</td><td>画风写成可测参数 + <b>必须挂邻近风格排除清单</b>（否则塌成通用 3D 脸）</td></tr>
+    <tr><td><code>stop-motion-cadence</code></td><td>定格动画 / 逐帧节奏</td><td>先定帧率和停顿数再谈画风；封杀三种"悄悄变顺滑"的因素</td></tr>
+    <tr><td><code>retro-dv-home-video</code></td><td>千禧年 DV 家庭录像 / 年代感</td><td>年代感 = 相机缺陷清单（对焦拉风箱/曝光漂移/手持抖动）；故事越小越真</td></tr>
+    <tr><td><code>music-beat-sync-mv</code></td><td>音乐 MV / 卡点视频</td><td>从 BPM 推节拍锚点；每个切点钉在真实重拍上；伴舞不许抢视觉中心</td></tr>
+    <tr><td><code>time-freeze-rewind</code></td><td>时间凝固 / 倒带名场面</td><td>五拍骨架：正常→碰撞→峰值冻结→环绕→精确倒带；<b>只允许一人豁免冻结</b></td></tr>
+  </table>
+
+  <h3>动作 / 场面向（5 个）</h3>
+  <table>
+    <tr><th>技能</th><th>什么时候用</th><th>核心机制一句话</th></tr>
+    <tr><td><code>epic-fantasy-scifi</code></td><td>奇幻科幻大场面（怪兽/巨龙/世界揭示）</td><td>每个生物独立定义块；体型靠参照物 + 低机位，禁止写 massive</td></tr>
+    <tr><td><code>combat-choreography</code></td><td>打斗戏</td><td>写生物力学 + 接触点 + 攻击链；写 epic 只会得到两人挥空气</td></tr>
+    <tr><td><code>sports-extreme</code></td><td>体育 / 极限运动</td><td>动作链按序写全（助跑→落地）；负向清单专治飞升/悬停/瞬移</td></tr>
+    <tr><td><code>pov-continuous-take</code></td><td>第一人称一镜到底（GoPro/FPV）</td><td>机位运动从"机身所在的身体"推导；每个切点手动声明</td></tr>
+    <tr><td><code>process-transformation-montage</code></td><td>过程变化（工艺/改造/搭建/时间流逝）</td><td><b>先声明什么不能变，再把变化按空间排序</b></td></tr>
+  </table>
+
+  <h3>场景氛围向（1 个）</h3>
+  <table>
+    <tr><th>技能</th><th>什么时候用</th><th>核心机制一句话</th></tr>
+    <tr><td><code>travel-city-walk</code></td><td>电影感旅拍 / 城市漫游</td><td>逐场景时间码 + 地点 + 一句词；质感靠胶片颗粒 + 黄金时刻光</td></tr>
+  </table>
+</div>
+
+<h2>三、4 个底座的挂法</h2>
+<div class="card">
+  <table>
+    <tr><th>底座</th><th>何时挂</th><th>关键动作</th></tr>
+    <tr><td><code>timeline-shot-script</code><br><span class="small">官方原话：全语料最承重的结构</span></td><td>几乎必挂</td><td>逐秒切连续时间段（不留断档）；每拍一个景别 + 一个主动作 + 一条声音</td></tr>
+    <tr><td><code>character-reference-lock</code></td><td>画面里有必须保持同一的人/产品/角色</td><td>逐条写<b>继承什么</b> + 单独逐条写<b>不继承什么</b>——inherit-nothing-else 条款是区分好锁和坏锁的分水岭</td></tr>
+    <tr><td><code>dialogue-performance-beats</code></td><td>有台词 / 有对话</td><td>声明语言 → 标记说话人 → 反应写因果链（不是表情清单）→ 每拍以明确终态闭合</td></tr>
+    <tr><td><code>storyboard-grid-to-video</code></td><td>多镜头顺序要求严格 / 图解感</td><td>两段式：先用图像模型出单页编号分镜格，再把格图喂给视频模型连接</td></tr>
+  </table>
+</div>
+
+<h2>四、组合规则</h2>
+<div class="rule"><b>1. 一条提示词 = 1 个主角 + 1~3 个底座</b>，最多再叠 1 个质感件（如 handheld-ugc-vlog 给带货做旧）。</div>
+<div class="rule"><b>2. 底座永不单独出片，主角永不互相混合。</b></div>
+<div class="rule"><b>3. 骨架可迁移（官方认证的复用姿势）</b>：time-freeze-rewind 的案例里，同一位作者用不同物理材料复用同一套五拍骨架——语料直接引用它证明骨架可迁移。即：<b>保留主角的时间轴骨架，只替换主体和物理材质</b>，是这套库最高的复用方式。</div>
+
+<h2>五、三场景落地配方</h2>
+
+<div class="card">
+  <h3>配方 1 ｜ 带货视频（黄金钩子 3 秒）</h3>
+  <p><span class="pill">主骨架</span><code>ugc-creator-review</code>（27 个里唯一为带货而生）</p>
+  <table>
+    <tr><th>层</th><th>技能</th><th>出什么力</th></tr>
+    <tr><td>主骨架</td><td><code>ugc-creator-review</code></td><td>开箱→细节旋转→使用→镜前确认→放回 节拍流；文案用第一人称感受句</td></tr>
+    <tr><td>底座</td><td><code>character-reference-lock</code></td><td>人和产品各一把锁；产品拆结构件；写明不继承什么</td></tr>
+    <tr><td>底座</td><td><code>timeline-shot-script</code></td><td><b>钩子落在 [00:00–00:03]</b>：一个变化过程 + 一个声音，台词焊在动作那一秒</td></tr>
+    <tr><td>质感</td><td><code>handheld-ugc-vlog</code> / <code>food-asmr</code></td><td>要真实感叠 vlog；饮品类借"每拍一变化+一声音"写特写段</td></tr>
+  </table>
+  <div class="note"><b>钩子 3 秒的本质</b> = timeline 第一拍（变化过程，不能是静态状态）+ meme-comedy 纪律（前 3 秒所有元素只为一个悬念服务、镜头一本正经）+ 第一人称感受句台词。</div>
+</div>
+
+<div class="card">
+  <h3>配方 2 ｜ 品牌视频（按调性挑主角）</h3>
+  <table>
+    <tr><th>品牌调性</th><th>主骨架</th><th>辅助</th></tr>
+    <tr><td>叙事大片</td><td><code>cinematic-narrative-short</code></td><td><code>epic-fantasy-scifi</code> 出大场面 + <code>character-reference-lock</code></td></tr>
+    <tr><td>投放级 TVC</td><td><code>product-commercial-shotlist</code></td><td><code>music-beat-sync-mv</code> 卡点</td></tr>
+    <tr><td>卡通 IP</td><td><code>3d-cartoon</code> / <code>anime-style-lock</code></td><td><code>character-reference-lock</code></td></tr>
+    <tr><td>生活方式 / 氛围</td><td><code>travel-city-walk</code> / <code>fashion-lookbook</code></td><td><code>time-freeze-rewind</code> 记忆点</td></tr>
+    <tr><td>一镜到底</td><td><code>pov-continuous-take</code></td><td><code>timeline-shot-script</code></td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h3>配方 3 ｜ 科普类视频</h3>
+  <table>
+    <tr><th>层</th><th>技能</th><th>出什么力</th></tr>
+    <tr><td>主骨架</td><td><code>ugc-creator-review</code></td><td>讲师出镜讲解框架（讲解面向角色、不对镜头）</td></tr>
+    <tr><td>过程演示</td><td><code>process-transformation-montage</code></td><td>声明什么不能变（车间/瓶型），变化按空间排序（投料→发酵→灌装）</td></tr>
+    <tr><td>对白</td><td><code>dialogue-performance-beats</code></td><td>问答式科普：反应写因果链，每拍以终态闭合</td></tr>
+    <tr><td>信息结构</td><td><code>timeline-shot-script</code></td><td>逐拍承载信息递进（现象→原理→结论），每拍一个知识点</td></tr>
+    <tr><td>图解段</td><td><code>storyboard-grid-to-video</code></td><td>先出编号图解格再转视频，信息顺序比纯文字提示词稳</td></tr>
+    <tr><td>开场钩子</td><td><code>time-freeze-rewind</code></td><td>时间凝固开场："把这一秒凝固，看看你喝下去的东西正在做什么"</td></tr>
+  </table>
+</div>
+
+<h2>六、公共铁律（27 个技能的共同签名）</h2>
+<div class="rule"><b>1. 双锁分离</b>：人和产品 / 角色和场景各锁各的，且必须写"不继承什么"。</div>
+<div class="rule"><b>2. timeline 承重</b>：任何配方最终落在逐秒时间轴上；时间段连续不重叠、不留断档。</div>
+<div class="rule"><b>3. 对白焊动作</b>：台词写在它被说出的那一拍里；反应写因果链。</div>
+<div class="rule"><b>4. 字全部后期</b>：模型渲 logo / slogan / 包装文字必崩，留干净尾帧，文字进剪映贴。</div>
+<div class="rule"><b>5. 单拍单事件</b>：一拍只堆一种物理效果；单镜≥1秒；写"过程变化"不写"静态状态"。</div>
+
+<h2>七、通用生产五步法</h2>
+<ol class="steps">
+  <li><span class="k">路由</span> —— 从 27 篇模板目录按意图 match 模板 useWhen。判断不准就先问清（"产品视频"可能是广告轨道也可能是 UGC 测评）。产出：一个技能名。</li>
+  <li><span class="k">锚定</span> —— 打开该技能 <code>references/cases.md</code>，选 1 条离需求最近的案例对标（品类近、时长近、质感近）。铁律：只选 1 条，绝不取平均。产出：锚定案例链接。</li>
+  <li><span class="k">填空</span> —— 按技能 Workflow 的结构块逐块填，每块必须有内容（空块就是提示词变虚的地方）。产出：完整草稿提示词。</li>
+  <li><span class="k">自查</span> —— 对照该技能 Guidance + Pitfalls 逐条过：微距指名拍什么、一拍一种物理效果、单镜≥1秒、别渲字、质感二选一、参考图定终帧就直说。产出：修订后提示词。</li>
+  <li><span class="k">验收</span> —— 拿 <code>production-workflow</code> 的 qa-rubric 逐帧看成片；失败按固定格式记录：镜头/时间点 + 观察 + 窄修复（只修坏镜头，不重写整条；对比同模型同设置）。产出：QA 记录。</li>
+</ol>
+
+<h2>八、学习路径（别 27 个平均用力）</h2>
+<div class="card">
+  <p><b>第一步：吃透 4 个底座</b>（timeline / reference-lock / dialogue-beats / storyboard-grid）——它们出现在几乎所有配方里，投入产出比最高。</p>
+  <p><b>第二步：精通业务相关的 3 个主角</b>——带货 <code>ugc-creator-review</code>；品牌 <code>product-commercial-shotlist</code> + <code>cinematic-narrative-short</code>；科普 <code>process-transformation-montage</code>。</p>
+  <p><b>第三步：其余 20 个当字典</b>——接到什么拍什么，翻到对应技能照结构块填空，不用背。</p>
+</div>
+
+<h2>九、一句话选型</h2>
+<div class="card">
+  <p><b>带货</b> = <code>ugc-creator-review</code> + 双锁 + 钩子拍。</p>
+  <p><b>品牌</b> = 按调性挑主角 + timeline 与 reference-lock 双底座。</p>
+  <p><b>科普</b> = <code>ugc-creator-review</code>（讲师）+ <code>process-transformation-montage</code>（过程）+ <code>dialogue-performance-beats</code>（问答）。</p>
+</div>
+
+<footer>来源：awesome-seedance（goodcase.ai 案例蒸馏，27 场景模板全量）· 2026-11-02 由 WorkBuddy 会话整理生成 · v2</footer>
+</div>
+</body>
+</html>

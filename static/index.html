@@ -1,0 +1,2133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>提示词智能体 · Skill 驱动</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234f8cff'/%3E%3Cpath d='M12 9l12 7-12 7z' fill='%23fff'/%3E%3C/svg%3E">
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --line:#2a2f3a;
+    --fg:#e8eaed; --dim:#9aa3b2; --accent:#4f8cff; --accent2:#7c5cff;
+    --ok:#3fb950; --warn:#d29922; --bad:#f85149;
+    --radius:12px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:"Microsoft YaHei","PingFang SC",system-ui,-apple-system,sans-serif;
+    background:var(--bg); color:var(--fg); height:100vh; display:flex; overflow:hidden;
+  }
+
+  /* ---------- 左侧栏 ---------- */
+  .side{
+    width:300px; flex-shrink:0; background:var(--panel); border-right:1px solid var(--line);
+    display:flex; flex-direction:column;
+  }
+  .side-head{padding:18px 18px 14px; border-bottom:1px solid var(--line)}
+  .side-head h1{font-size:15px; font-weight:700; letter-spacing:.3px}
+  .side-head p{font-size:11px; color:var(--dim); margin-top:5px; line-height:1.5}
+  .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ok);margin-right:5px;vertical-align:middle}
+
+  .side-body{flex:1; overflow-y:auto; padding:12px}
+  .sec-title{font-size:11px; color:var(--dim); text-transform:uppercase; letter-spacing:.8px; margin:8px 6px 8px}
+
+  /* ---------- 技能列表 ----------
+     31 个技能行为统一：**点一下 = 把它的名字（召唤词）填进输入框**，
+     点右侧 › = 看详情。没有「锁定」这种隐藏状态 ——
+     2026-10-16 实测用中文名点名风格 12/12 精确命中，所以指定风格不需要隐藏开关，
+     把名字写进输入框反而更好：看得见、能改、还能接着补充别的要求。
+     列表里显示中文名（从技能标题里取），英文短名做副标题，
+     skill 的真名只放在 data-name 里，不发散到界面上。 */
+  .sk-group{
+    font-size:11px; color:var(--dim); font-weight:600; letter-spacing:.5px;
+    margin:14px 6px 7px; display:flex; align-items:center; gap:7px;
+  }
+  .sk-group:first-child{margin-top:2px}
+  .sk-group .n{color:#5a6474; font-weight:400}
+  .sk-group .ln{flex:1; height:1px; background:var(--line)}
+  .skill{
+    background:var(--panel2); border:1px solid var(--line); border-radius:8px;
+    padding:7px 10px; margin-bottom:6px; cursor:pointer; transition:.13s;
+    display:flex; align-items:center; gap:8px;
+  }
+  .skill:hover{border-color:#3a4150; background:#222733}
+  .skill-main{flex:1; min-width:0}
+  .skill-name{
+    font-size:12px; font-weight:600; line-height:1.35;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .skill-slug{
+    font-size:10px; color:#5a6474; margin-top:2px; line-height:1.3;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    font-family:Consolas,Monaco,monospace;
+  }
+  .skill-plus{
+    font-size:13px; color:#5a6474; flex-shrink:0; line-height:1;
+    width:15px; text-align:center; transition:.13s;
+  }
+  .skill:hover .skill-plus{color:var(--accent)}
+  /* 点一下往里填名字，给个短促反馈，免得以为没反应 */
+  .skill.flash{border-color:var(--accent); background:#182238}
+  .skill.flash .skill-name{color:var(--accent)}
+  .skill-arrow{
+    font-size:11px; color:#3a4150; flex-shrink:0; cursor:pointer;
+    padding:2px 4px; border-radius:5px; transition:.13s;
+  }
+  .skill-arrow:hover{color:var(--accent); background:#252c3a}
+
+  /* ---------- 技能详情弹窗 ---------- */
+  .sk-detail{width:680px; max-width:94vw; max-height:84vh; display:flex; flex-direction:column}
+  .sk-detail-body{padding:18px 20px; overflow-y:auto; flex:1}
+  .sk-h{display:flex; align-items:center; gap:9px; margin-bottom:5px; flex-wrap:wrap}
+  .sk-h .nm{font-size:15px; font-weight:700; color:var(--fg); font-family:Consolas,Monaco,monospace}
+  .sk-sub{font-size:11px; color:#5a6474; margin-bottom:14px; font-family:Consolas,Monaco,monospace}
+  .sk-label{
+    font-size:11px; color:var(--dim); font-weight:600; margin:14px 0 7px;
+    display:flex; align-items:center; gap:6px;
+  }
+  .sk-label::before{content:''; width:3px; height:11px; background:var(--accent); border-radius:2px}
+  .sk-text{
+    font-size:12.5px; line-height:1.8; color:#c9d1d9; background:#11141a;
+    border:1px solid var(--line); border-radius:9px; padding:12px 14px; white-space:pre-wrap; word-break:break-word;
+  }
+  .sk-ref{
+    display:flex; align-items:center; gap:8px; padding:8px 11px; background:#11141a;
+    border:1px solid var(--line); border-radius:8px; margin-bottom:6px; font-size:12px;
+  }
+  .sk-ref .rn{flex:1; font-family:Consolas,Monaco,monospace; color:#c9d1d9; word-break:break-all}
+  .sk-ref .rs{font-size:10.5px; color:#5a6474; flex-shrink:0}
+  .sk-body-wrap{position:relative}
+  .sk-body-box{
+    max-height:260px; overflow-y:auto; font-size:12px; line-height:1.75; color:var(--dim);
+    background:#11141a; border:1px solid var(--line); border-radius:9px; padding:12px 14px;
+    white-space:pre-wrap; word-break:break-word; font-family:Consolas,Monaco,monospace;
+  }
+  .sk-fade{
+    position:absolute; bottom:0; left:0; right:0; height:56px; pointer-events:none;
+    background:linear-gradient(transparent,#11141a); border-radius:0 0 9px 9px;
+  }
+
+  .side-foot{padding:12px; border-top:1px solid var(--line); display:flex; gap:8px}
+
+  /* ---------- 主区 ---------- */
+  .main{flex:1; display:flex; flex-direction:column; min-width:0}
+  .top{
+    height:52px; border-bottom:1px solid var(--line); display:flex; align-items:center;
+    padding:0 20px; gap:12px; background:var(--panel); flex-shrink:0;
+  }
+  .top .title{font-size:13px; font-weight:600; flex:1}
+  .chip{
+    font-size:11px; padding:3px 9px; border-radius:20px; background:#232833; color:var(--dim);
+    border:1px solid var(--line); cursor:pointer; transition:.15s;
+  }
+  .chip:hover{border-color:#3a4150; color:var(--fg)}
+  .chip.active{background:#1b2436; border-color:var(--accent); color:var(--accent)}
+
+  .feed{flex:1; overflow-y:auto; padding:24px 20px 12px}
+  .feed-inner{max-width:860px; margin:0 auto}
+
+  .msg{margin-bottom:20px; animation:fade .3s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+  .msg.user{display:flex; justify-content:flex-end}
+  .msg.user .bubble{
+    background:linear-gradient(135deg,var(--accent),var(--accent2)); color:#fff;
+    padding:10px 15px; border-radius:14px 14px 3px 14px; max-width:72%; font-size:13.5px; line-height:1.65;
+  }
+
+  .card{
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+    overflow:hidden; margin-bottom:14px;
+  }
+  .card-head{
+    padding:10px 14px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:8px;
+    font-size:11.5px; color:var(--dim); background:var(--panel2);
+  }
+  .card-head b{color:var(--fg); font-weight:600; font-size:12px}
+  .card-body{padding:14px 16px; font-size:13px; line-height:1.8; white-space:pre-wrap; word-break:break-word}
+  .card-body.md{white-space:normal}
+  .card-body.md p{margin:0 0 9px}
+  .card-body.md h1,.card-body.md h2,.card-body.md h3{
+    font-size:13.5px; margin:14px 0 7px; padding-bottom:5px; border-bottom:1px solid var(--line); font-weight:700;
+  }
+  .card-body.md code{
+    background:#232833; padding:1.5px 5px; border-radius:4px; font-size:12px;
+    font-family:Consolas,Monaco,monospace; color:#ffb86c;
+  }
+  .card-body.md pre{background:#11141a; border:1px solid var(--line); border-radius:8px; padding:12px; overflow-x:auto; margin:9px 0}
+  .card-body.md pre code{background:none; padding:0; color:#c9d1d9}
+  .card-body.md strong{color:#fff; font-weight:700}
+  .card-body.md hr{border:none; border-top:1px solid var(--line); margin:14px 0}
+  .card-body.md ul{padding-left:20px; margin:7px 0}
+  .card-body.md li{margin:3px 0}
+  .card-body.md table{border-collapse:collapse; width:100%; margin:9px 0; font-size:12px}
+  .card-body.md th,.card-body.md td{border:1px solid var(--line); padding:6px 9px; text-align:left}
+  .card-body.md th{background:var(--panel2); font-weight:600}
+
+  /* 步骤条 */
+  .steps{display:flex; gap:6px; padding:11px 14px; flex-wrap:wrap; align-items:center}
+  .step{
+    font-size:11px; padding:4px 10px; border-radius:6px; background:#232833; color:#5a6474;
+    display:flex; align-items:center; gap:5px; transition:.2s;
+  }
+  .step.done{background:#12261a; color:var(--ok)}
+  .step.doing{background:#1b2436; color:var(--accent)}
+  .step.err{background:#2a1517; color:var(--bad)}
+  .step.skip{opacity:.38; text-decoration:line-through}
+  .arrow{color:#3a4150; font-size:10px}
+
+  /* 复制按钮（提示词 / 修正稿右上角） */
+  .copy-btn{
+    font-size:10.5px; padding:2px 9px; border-radius:6px; cursor:pointer;
+    background:#232833; border:1px solid var(--line); color:var(--dim); transition:.15s;
+  }
+  .copy-btn:hover{border-color:var(--accent); color:var(--accent)}
+  .copy-btn:active{transform:scale(.96)}
+
+  /* 输入框 */
+  .composer{padding:14px 20px 20px; flex-shrink:0; background:linear-gradient(transparent,var(--bg) 40%)}
+  .composer-inner{
+    max-width:860px; margin:0 auto; background:var(--panel); border:1px solid var(--line);
+    border-radius:14px; padding:10px 12px; display:flex; gap:10px; align-items:flex-end; transition:.15s;
+  }
+  .composer-inner:focus-within{border-color:var(--accent); box-shadow:0 0 0 3px rgba(79,140,255,.12)}
+  textarea{
+    flex:1; background:none; border:none; outline:none; color:var(--fg); resize:none;
+    font-family:inherit; font-size:13.5px; line-height:1.65; max-height:150px; min-height:24px;
+  }
+  textarea::placeholder{color:#5a6474}
+  .send{
+    width:34px; height:34px; border-radius:9px; border:none; cursor:pointer; flex-shrink:0;
+    background:linear-gradient(135deg,var(--accent),var(--accent2)); color:#fff; font-size:15px;
+    display:grid; place-items:center; transition:.15s;
+  }
+  .send:hover{filter:brightness(1.12)}
+  .send:disabled{opacity:.35; cursor:not-allowed}
+
+  .hint{max-width:860px; margin:9px auto 0; font-size:11px; color:#5a6474; display:flex; gap:6px;
+        justify-content:flex-start; flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none}
+  .hint::-webkit-scrollbar{display:none}
+  .hint span{background:#1a1e26; padding:3px 8px; border-radius:5px; cursor:pointer; border:1px solid transparent;
+             white-space:nowrap; flex:0 0 auto}
+  .hint i.sep{flex:0 0 auto; width:1px; height:13px; background:var(--line); margin:0 3px; align-self:center}
+  /* 行首分组标签：带货：/ 品牌：/ 科普： */
+  .hint b.lab{flex:0 0 auto; font-weight:600; color:#7a8496; padding:3px 2px 3px 0; white-space:nowrap; align-self:center}
+  /* 底栏第二、三行：品牌 6 类 / 科普 6 类按钮，行距收紧 */
+  .hint.hint2{margin-top:5px}
+  .hint.hint3{margin-top:5px}
+
+  /* 例子条：点了某个拍法按钮后，显示一条可模仿的完整需求例子 */
+  .exbar{background:#181d1a; border-color:#2c3a30; margin-bottom:8px}
+  .exbar .exlab{color:#7fb08f; font-weight:600; white-space:nowrap}
+  .exbar .extext{color:#9aa5b5; line-height:1.55}
+  .exbar .exclose{flex:0 0 auto; cursor:pointer; color:#5a6474; padding:0 4px; font-size:13px}
+  .exbar .exclose:hover{color:var(--dim)}
+
+  .tplbar{max-width:860px; margin:0 auto 8px; display:none; align-items:center; gap:10px; flex-wrap:wrap;
+          background:#151922; border:1px solid var(--line); border-radius:9px; padding:7px 10px;
+          font-size:11.5px; color:var(--dim); line-height:1.6}
+  .tplbar.show{display:flex}
+  .tplbar b{color:var(--accent); font-weight:500}
+  .tplbar .chips{display:flex; gap:5px; flex-wrap:wrap; margin-left:auto}
+  /* 第 2 轮确认条：说明文字按行排，别和按钮抢同一行 */
+  #pickbar.show{display:block}
+  #pickbar .tinfo{display:block}
+  #pickbar .chips{margin-left:0; margin-top:7px}
+  .tplbar .tchip{background:#1a1e26; padding:2px 7px; border-radius:5px; cursor:pointer;
+                 border:1px solid transparent; color:#5a6474; white-space:nowrap}
+  .tplbar .tchip:hover{border-color:var(--line); color:var(--dim)}
+  .tplbar .tchip.on{border-color:var(--accent); color:var(--accent)}
+  .hint span:hover{border-color:var(--line); color:var(--dim)}
+
+  .empty{text-align:center; padding:60px 20px; color:#5a6474}
+  .empty h2{font-size:16px; color:var(--dim); margin-bottom:9px; font-weight:600}
+  .empty p{font-size:12.5px; line-height:1.9}
+
+  /* 弹窗 */
+  .mask{
+    position:fixed; inset:0; background:rgba(0,0,0,.62); display:none;
+    align-items:center; justify-content:center; z-index:99; backdrop-filter:blur(3px);
+  }
+  .mask.show{display:flex}
+  .modal{background:var(--panel); border:1px solid var(--line); border-radius:14px; width:440px; max-width:92vw; overflow:hidden}
+  .modal-head{padding:15px 18px; border-bottom:1px solid var(--line); font-size:13.5px; font-weight:600}
+  .modal-body{padding:18px; display:flex; flex-direction:column; gap:13px}
+  .field label{display:block; font-size:11.5px; color:var(--dim); margin-bottom:6px}
+  .field input{
+    width:100%; background:var(--panel2); border:1px solid var(--line); border-radius:8px;
+    padding:9px 11px; color:var(--fg); font-size:12.5px; outline:none; font-family:inherit;
+  }
+  .field input:focus{border-color:var(--accent)}
+  .modal-foot{padding:13px 18px; border-top:1px solid var(--line); display:flex; justify-content:flex-end; gap:9px}
+  .btn{
+    padding:8px 17px; border-radius:8px; border:1px solid var(--line); background:var(--panel2);
+    color:var(--fg); font-size:12.5px; cursor:pointer; font-family:inherit; transition:.15s;
+  }
+  .btn:hover{border-color:#3a4150}
+  .btn.primary{background:linear-gradient(135deg,var(--accent),var(--accent2)); border:none; color:#fff}
+  .btn.sm{padding:6px 12px; font-size:11.5px; flex:1}
+
+  /* ---------- 视图切换 ---------- */
+  .view{flex:1; display:flex; flex-direction:column; min-height:0}
+  .tabs{display:flex; gap:3px; background:#11141a; border:1px solid var(--line); border-radius:10px; padding:3px; flex-shrink:0}
+  .tab{font-size:12.5px; padding:5px 13px; border-radius:7px; color:var(--dim); cursor:pointer; transition:.15s; white-space:nowrap; user-select:none; border:1px solid transparent}
+  .tab:hover{color:var(--fg)}
+  .tab.active{background:var(--panel2); color:var(--fg); border-color:#3a4150}
+  .tab .n{font-size:10.5px; opacity:.55; margin-left:4px}
+
+  /* ---------- 案例库 ---------- */
+  .case-tools{display:flex; gap:9px; align-items:center; padding:11px 20px; border-bottom:1px solid var(--line); flex-shrink:0; flex-wrap:wrap}
+  .case-search{
+    flex:1; min-width:200px; background:var(--panel2); border:1px solid var(--line); border-radius:9px;
+    padding:8px 12px; color:var(--fg); font-size:12.5px; outline:none; font-family:inherit; transition:.15s;
+  }
+  .case-search:focus{border-color:var(--accent); box-shadow:0 0 0 3px rgba(79,140,255,.1)}
+  .case-sel{
+    background:var(--panel2); border:1px solid var(--line); border-radius:9px; padding:8px 10px;
+    color:var(--fg); font-size:12.5px; outline:none; font-family:inherit; cursor:pointer;
+  }
+  .case-filters{
+    padding:9px 20px 10px; border-bottom:1px solid var(--line); flex-shrink:0;
+    display:flex; flex-direction:column; gap:7px; max-height:148px; overflow-y:auto;
+  }
+  .frow{display:flex; gap:6px; align-items:center; flex-wrap:wrap}
+  .fl{font-size:10.5px; color:#5a6474; flex-shrink:0; min-width:28px}
+  .fchip{
+    font-size:11px; padding:3px 9px; border-radius:20px; border:1px solid var(--line); background:#1a1e26;
+    color:var(--dim); cursor:pointer; transition:.13s; white-space:nowrap; user-select:none;
+  }
+  .fchip:hover{border-color:#3a4150; color:var(--fg)}
+  .fchip.active{background:#1b2436; border-color:var(--accent); color:var(--accent)}
+  .fchip .n{opacity:.5; margin-left:4px; font-size:10px}
+  .case-scroll{flex:1; overflow-y:auto; padding:16px 20px 40px}
+  .case-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(196px,1fr)); gap:14px}
+  .c-card{
+    background:var(--panel); border:1px solid var(--line); border-radius:11px; overflow:hidden;
+    cursor:pointer; transition:.15s; display:flex; flex-direction:column;
+  }
+  .c-card:hover{border-color:#3a4150; transform:translateY(-2px)}
+  .c-thumb{position:relative; aspect-ratio:16/9; background:#11141a; overflow:hidden}
+  .c-thumb img{width:100%; height:100%; object-fit:cover; display:block; opacity:0; transition:opacity .3s}
+  .c-thumb img.on{opacity:1}
+  .c-thumb .ph{position:absolute; inset:0; display:grid; place-items:center; color:#3a4150; font-size:10.5px}
+  .c-tag{
+    position:absolute; top:7px; left:7px; font-size:10px; padding:2px 6px; border-radius:6px;
+    background:rgba(15,17,21,.85); border:1px solid rgba(255,255,255,.08); color:#c9d1d9;
+  }
+  .c-tag.l2{color:var(--ok); border-color:rgba(63,185,80,.35)}
+  .c-hot{
+    position:absolute; bottom:7px; right:7px; font-size:10px; padding:2px 6px; border-radius:6px;
+    background:rgba(15,17,21,.85); border:1px solid rgba(255,255,255,.08); color:#c9d1d9;
+  }
+  .c-info{padding:9px 11px 11px; display:flex; flex-direction:column; gap:5px}
+  .c-title{
+    font-size:12.5px; font-weight:600; line-height:1.45; min-height:36px;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+  }
+  .c-tpl{font-size:10px; color:var(--accent); opacity:.85; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .c-sub{font-size:10.5px; color:#5a6474; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .case-more{text-align:center; padding:20px 0 6px; font-size:11.5px; color:#5a6474}
+
+  /* ---------- 案例详情 ---------- */
+  .case-detail{width:1000px; max-width:95vw; height:86vh; display:flex; flex-direction:column}
+  .case-body{
+    flex:1; overflow-y:auto; padding:18px 20px; align-items:start;
+    display:grid; grid-template-columns:minmax(0,0.95fr) minmax(0,1.05fr); gap:22px;
+  }
+  .case-video{width:100%; aspect-ratio:16/9; object-fit:contain; background:#000; border-radius:10px; display:block}
+  .cmeta{font-size:11.5px; line-height:1.95; color:var(--dim)}
+  .cmeta b{color:var(--fg); font-weight:600}
+  .csec{font-size:11px; color:var(--dim); font-weight:600; margin:16px 0 8px; display:flex; align-items:center; gap:6px}
+  .csec::before{content:''; width:3px; height:11px; background:var(--accent); border-radius:2px}
+  .cprompt{
+    background:#11141a; border:1px solid var(--line); border-radius:9px; padding:12px 14px;
+    font-family:Consolas,Monaco,monospace; font-size:12px; line-height:1.75; color:#c9d1d9;
+    white-space:pre-wrap; word-break:break-word; max-height:300px; overflow-y:auto;
+  }
+  .cretest{
+    display:flex; align-items:center; gap:9px; padding:9px 12px; background:#11141a;
+    border:1px solid var(--line); border-radius:8px; margin-bottom:7px; font-size:11.5px; flex-wrap:wrap;
+  }
+  .cretest .v{font-weight:600}
+  .v.good{color:var(--ok)} .v.mid{color:var(--warn)} .v.bad{color:var(--bad)}
+  .clink{color:var(--accent); text-decoration:none; font-size:11.5px}
+  .clink:hover{text-decoration:underline}
+  .ctagline{font-size:10.5px; color:#5a6474}
+  @media (max-width:900px){ .case-body{grid-template-columns:1fr} }
+
+  ::-webkit-scrollbar{width:8px;height:8px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:#2f3542; border-radius:4px}
+  ::-webkit-scrollbar-thumb:hover{background:#3a4150}
+</style>
+</head>
+<body>
+
+<!-- ============ 左侧 ============ -->
+<aside class="side">
+  <div class="side-head">
+    <h1>提示词智能体</h1>
+    <p><span class="dot"></span>已加载 <span id="skillCount">0</span> 个技能</p>
+  </div>
+  <div class="side-body">
+    <div class="sec-title">点一下 · 召唤词填在输入框最前面（右侧 › 看详情）</div>
+    <div id="skillList"></div>
+  </div>
+  <div class="side-foot" style="flex-direction:column;align-items:stretch;gap:9px">
+    <div>
+      <button class="btn sm" id="updateBtn" style="flex:none;width:100%" onclick="askUpdate()">检查更新</button>
+      <div id="updateMeta" style="font-size:10.5px;color:#5a6474;margin-top:6px;line-height:1.6;text-align:center">
+        读取中…
+      </div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn sm" onclick="reloadSkills()">重新扫描</button>
+      <button class="btn sm" onclick="openConfig()">设置</button>
+    </div>
+  </div>
+</aside>
+
+<!-- ============ 主区 ============ -->
+<main class="main">
+  <div class="top">
+    <div class="tabs">
+      <div class="tab active" id="tabChat" onclick="switchView('chat')">💬 生成分镜提示词</div>
+      <div class="tab" id="tabCases" onclick="switchView('cases')">🎬 案例库<span class="n" id="tabCaseCount"></span></div>
+    </div>
+
+    <span id="chatTools" style="flex:1;display:flex;align-items:center;gap:12px;min-width:0">
+      <span class="chip" id="memChip" style="display:none" onclick="clearMemory()"
+            title="它记得上面聊过什么。点这里可以清空记忆，重新开始。">🧠 记忆 0 轮</span>
+      <span style="font-size:11.5px;color:var(--dim)" id="runMode">
+        <span class="dot"></span>自动选技能 · 自动质检 · 自动修正
+      </span>
+      <span style="flex:1"></span>
+      <span class="chip" onclick="clearFeed()">清空</span>
+    </span>
+
+    <span id="caseTools" style="display:none;flex:1;font-size:11.5px;color:var(--dim);text-align:right">
+      <span class="dot"></span>数据源 data/cases.json · 点封面看完整 prompt
+    </span>
+  </div>
+
+  <div class="view" id="chatView">
+  <div class="feed" id="feed">
+    <div class="feed-inner" id="feedInner">
+      <div class="empty" id="empty">
+        <h2>说一句话，我给你分镜提示词</h2>
+        <p>
+          参考下面的例子描述需求（点底栏按钮可一键填入对应类型的模板）：<br><br>
+          <b>带货例子</b>：带货口播20秒竖屏：真人测评百芙乐蓝莓后生元饮；产品拆件＝深蓝莓紫（偏紫罗兰）哑光自立袋＋深蓝螺旋盖＋紫红果汁挂壁；出镜＝28岁女营养师，燕麦色针织+亚麻围裙；卖点＝益生菌发酵花青素好吸收；前3秒钩子＝拧盖"啵"一声液体涌出；收尾＝产品独占画面→人拿产品看镜头；质感＝手机实拍测评感<br><br>
+          <b>品牌例子</b>：品牌视频总长1–2分钟16:9（单段上限30秒，拆成3–4段逐段生成后剪辑拼接）：电影感叙事——第1段：外星人从太空降落在百芙乐蓝莓果园；第2段：进车间遇见营养师，参观工艺；第3段：发酵罐发光收尾；主角＝外星人（银灰连体服、蓝灰皮肤，体型用身旁的营养师作参照）；slogan后期贴，画面不渲字<br><br>
+          <b>科普例子</b>：科普讲解总长3–5分钟16:9（拆成6–10段，每段≤30秒，一段讲一个知识点）：营养师对镜头讲「发酵让花青素更好吸收」；知识点递进①花青素直接吸收率低②益生菌发酵释放更多③后生元直达肠道发挥作用；过程演示：投料→密闭发酵罐→无菌灌装；准确性红线：只有经过发酵才能说「释放更多」，不夸功效<br><br>
+          系统会自动挑出该用的技能包，按规范写成分镜提示词，再自检一遍。<br>
+          <b>它记得上下文</b> —— 写完可以接着说「再短一点」「第 2 个镜头换成特写」。
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="composer">
+    <div class="tplbar exbar" id="exbar"></div>
+    <div class="tplbar" id="tplbar"></div>
+    <div class="tplbar" id="pickbar"></div>
+    <div class="composer-inner">
+      <textarea id="input" rows="1" placeholder="描述你要做的视频……也可以接着改：「再短一点」「换成口播版」"></textarea>
+      <button class="send" id="send" onclick="send()">➤</button>
+    </div>
+    <div class="hint">
+      <b class="lab">带货：</b>
+      <span onclick="fillTpl('t1')" title="站桩口播测评：真人对着镜头讲，动作＋声音做钩子">站桩口播</span>
+      <span onclick="fillTpl('t2')" title="开箱测评：手部拆包，靠开箱序列带节奏">开箱</span>
+      <span onclick="fillTpl('t3')" title="剧情小剧场：剧情里自然出现产品，不破戏">剧情</span>
+      <span onclick="fillTpl('t4')" title="场景 Vlog：跟拍一天，卖点是「生活里有它」">Vlog</span>
+      <span onclick="fillTpl('t5')" title="纯产品质感片：无人物，靠一个强烈动态＋质感镜头">产品片</span>
+      <span onclick="fillTpl('t6')" title="吃播 / 使用 ASMR：画面与声音一一配对">ASMR</span>
+      <span onclick="fillTpl('t7')" title="对比测评：自己 vs 泛化品类，不点名竞品">对比</span>
+      <span onclick="fillTpl('t8')" title="反差钩子短片：一个包袱，产品是包袱落点">反差</span>
+    </div>
+    <div class="hint hint2">
+      <b class="lab">品牌：</b>
+      <span onclick="fillPreset('b1')" title="品牌故事片：有人物有转折，讲『谁在为什么做这件事』">品牌故事</span>
+      <span onclick="fillPreset('b2')" title="世界观奇观片：奇幻／科幻大场面，卖『这东西不一般』">世界观奇观</span>
+      <span onclick="fillPreset('b3')" title="溯源工艺片：把『怎么做的』摊开拍，一段一个工序">溯源工艺</span>
+      <span onclick="fillPreset('b4')" title="沉浸带看片：第一人称一镜到底，像自己走了一趟">沉浸带看</span>
+      <span onclick="fillPreset('b5')" title="质感形象片：没人出镜，只用光和材质让人想要">质感形象片</span>
+      <span onclick="fillPreset('b6')" title="人设口播片：真人对镜头讲品牌理念，不轰炸卖点">人设口播</span>
+    </div>
+    <div class="hint hint3">
+      <b class="lab">科普：</b>
+      <span onclick="fillPreset('k1')" title="原理讲解片：讲『为什么会这样』，一个知识点一段">原理讲解</span>
+      <span onclick="fillPreset('k2')" title="过程演示片：一段一个工序，按物理顺序推进，不跳步">过程演示</span>
+      <span onclick="fillPreset('k3')" title="辟谣纠错片：先立错误认知再推翻，给替代说法">辟谣纠错</span>
+      <span onclick="fillPreset('k4')" title="双人问答片：一问一段，先把结论给出来再解释">双人问答</span>
+      <span onclick="fillPreset('k5')" title="微观世界片：菌群／分子／肠道，讲看不见的机制">微观世界</span>
+      <span onclick="fillPreset('k6')" title="数据拆解片：配料表／检测报告逐项指过去，数字上字卡">数据拆解</span>
+    </div>
+  </div>
+  </div><!-- /chatView -->
+
+  <!-- ============ 案例库 ============ -->
+  <div class="view" id="casesView" style="display:none">
+    <div class="case-tools">
+      <input class="case-search" id="cq" placeholder="搜标题、prompt 正文、作者……（输入后自动搜）"
+             oninput="onCaseSearch()">
+      <select class="case-sel" id="cqSort" onchange="onCaseSort()">
+        <option value="hot">按热度排序</option>
+        <option value="stable">按稳定度排序</option>
+        <option value="new">按发布先后</option>
+        <option value="title">按标题</option>
+      </select>
+      <button class="btn" onclick="resetCaseFilters()">清空筛选</button>
+    </div>
+
+    <div class="case-filters" id="caseFilters"></div>
+
+    <div class="case-scroll" id="caseScroll">
+      <div class="case-grid" id="caseGrid"></div>
+      <div class="case-more" id="caseMore"></div>
+    </div>
+  </div><!-- /casesView -->
+</main>
+
+<!-- ============ 设置弹窗 ============ -->
+<div class="mask" id="mask">
+  <div class="modal">
+    <div class="modal-head">大模型设置</div>
+    <div class="modal-body">
+      <div class="field">
+        <label>接口地址（Base URL）</label>
+        <input id="cfgUrl" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1">
+      </div>
+      <div class="field">
+        <label>API Key</label>
+        <input id="cfgKey" type="password" placeholder="留空则不修改">
+      </div>
+      <div class="field">
+        <label>模型名</label>
+        <input id="cfgModel" placeholder="qwen-plus">
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeConfig()">取消</button>
+      <button class="btn primary" onclick="saveConfig()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 检查更新确认弹窗 ============ -->
+<div class="mask" id="updateMask" onclick="if(event.target===this)closeAskUpdate()">
+  <div class="modal">
+    <div class="modal-head">检查更新</div>
+    <div class="modal-body">
+      <div style="font-size:12.5px;line-height:1.85;color:#c9d1d9">
+        会去上游仓库看一眼有没有新数据，有就拉下来，然后重新生成技能里的案例文件。
+      </div>
+      <div style="font-size:11.5px;line-height:1.8;color:#5a6474">
+        · 没有新数据时，技能文件不会被改动<br>
+        · 大约需要 10~20 秒，期间请不要关页面
+      </div>
+      <div style="font-size:11.5px;line-height:1.8;color:var(--warn)">
+        ⚠ 如果有新数据，<b>skills/ 下的技能文件会被覆盖重写</b>（内容由 data/ 重新生成）。
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeAskUpdate()">取消</button>
+      <button class="btn primary" onclick="runUpdate()">开始检查</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 技能详情弹窗 ============ -->
+<div class="mask" id="skillMask" onclick="if(event.target===this)closeSkill()">
+  <div class="modal sk-detail">
+    <div class="modal-head">
+      技能详情
+      <span style="float:right;cursor:pointer;color:var(--dim);font-weight:400" onclick="closeSkill()">✕ 关闭</span>
+    </div>
+    <div class="sk-detail-body" id="skDetailBody"></div>
+    <div class="modal-foot">
+      <button class="btn primary" onclick="closeSkill()">知道了</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 案例详情弹窗 ============ -->
+<div class="mask" id="caseMask" onclick="if(event.target===this)closeCase()">
+  <div class="modal case-detail">
+    <div class="modal-head" id="caseHead">案例详情</div>
+    <div class="case-body" id="caseBody"></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="copyCasePrompt()">复制完整 prompt</button>
+      <button class="btn" onclick="closeCase()">关闭</button>
+      <button class="btn primary" onclick="useCase()">用这条生成 ➤</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================== 状态 ============================== */
+/* 固定为「自动选技能 + 自动质检」，不再提供手动开关。
+   指定风格的方式：点侧栏把名字填进输入框（见 fillSkill）。 */
+const S = {
+  skills: [],
+  busy: false,
+  history: [],      // 多轮对话记忆：[{role:'user'|'assistant', content:'...'}]
+  lastSkills: [],   // 上一轮用过的技能，追问时后端靠它兜底
+};
+
+/* 工具类技能没有中文标题，这里补上显示名（只影响显示，不影响 skill 真名） */
+const TOOL_ZH = {
+  'seedance-production-workflow': '生产流程规范',
+  'seedance-prompt-library':      '提示词模板库',
+  'seedance-prompt-lint':         '提示词质检器',
+  'seedance-storyboard-writer':   '分镜脚本生成器',
+};
+
+/* 当前视图：'chat' 生成 | 'cases' 案例库 */
+let CUR_VIEW = 'chat';
+
+/* 记忆上限：超过就丢最早的（后端还会再取最近 8 条，这里留宽一点当缓冲区） */
+const HISTORY_MAX = 16;
+const HISTORY_MSG_CHARS = 6000;   // 单条助手回复入记忆前先截断，防止越聊越大
+
+/* ---------- 记忆（多轮上下文） ---------- */
+function rememberTurn(userText, res){
+  const g = res && res.generate;
+  if(!g || !g.content) return;          // 这一轮没产出东西，不记
+
+  S.history.push({role:'user', content:String(userText)});
+  S.history.push({role:'assistant', content:String(g.content).slice(0, HISTORY_MSG_CHARS)});
+
+  if(S.history.length > HISTORY_MAX){
+    S.history = S.history.slice(-HISTORY_MAX);
+  }
+  S.lastSkills = (res.skills_used || []).slice();
+  updateMemChip();
+}
+
+function updateMemChip(){
+  const chip = document.getElementById('memChip');
+  if(!chip) return;
+  const rounds = Math.floor(S.history.length / 2);
+  chip.textContent = `🧠 记忆 ${rounds} 轮`;
+  // 只在聊天视图里显示记忆胶囊
+  chip.style.display = (rounds > 0 && CUR_VIEW === 'chat') ? '' : 'none';
+}
+
+function clearMemory(){
+  S.history = [];
+  S.lastSkills = [];
+  updateMemChip();
+  toast('记忆已清空，下一句当作新话题');
+}
+
+/* ============================== 技能列表 ==============================
+     31 个技能行为完全统一：
+     点整行  → 把它的「召唤词」填到输入框最前面（风格=中文名，工具=一句现成的说法）
+               你原来写的内容顺移到后面，接着补需求即可
+     点 ›    → 看这个技能的详情
+   界面上只出现中文名，skill 的真名（seedance-xxx）放在 data-name 里。 */
+
+/* 从技能标题里取中文名：27 个风格技能的正文首行是「English · 中文名」 */
+function zhOfSkill(s){
+  if(TOOL_ZH[s.name]) return TOOL_ZH[s.name];
+  const first = ((s.body_preview || '').trim().split('\n')[0] || '').trim();
+  if(first.includes('·')) return first.split('·').pop().trim();
+  return first || s.name.replace(/^seedance-/, '');
+}
+
+/* skill 真名 → 界面上的中文名（查不到就退回真名，别显示空白） */
+function zhOfName(name){
+  const hit = S.skills.find(s=>s.name === name);
+  return hit ? hit.zh : name;
+}
+
+async function loadSkills(){
+  const r = await fetch('/api/skills').then(r=>r.json());
+  S.skills = (r.skills || []).map(s=>({
+    ...s,
+    zh:    zhOfSkill(s),
+    slug:  s.name.replace(/^seedance-/, ''),
+    /* 判据：带 cases.md 的是「风格/题材」技能（由 build_extra_skills 生成）；
+       不带的是「工具」技能。这样上游以后新增风格技能会自动归对组，不用改代码。 */
+    isStyle: (s.references || []).some(x=>x.name === 'cases.md'),
+  }));
+  document.getElementById('skillCount').textContent = r.count;
+  renderSkillList();
+}
+
+function renderSkillList(){
+  const style = [], tool = [];
+  S.skills.forEach((s,i)=>(s.isStyle ? style : tool).push(i));
+
+  const grp = (title, n) =>
+    `<div class="sk-group"><span>${title}</span><span class="n">${n}</span><span class="ln"></span></div>`;
+
+  const row = (i) => {
+    const s = S.skills[i];
+    return `<div class="skill" data-name="${escapeHtml(s.name)}"
+        onclick="fillSkill(${i})" title="点一下把「${escapeHtml(s.zh)}」填进输入框">
+      <span class="skill-plus">＋</span>
+      <div class="skill-main">
+        <div class="skill-name">${escapeHtml(s.zh)}</div>
+        <div class="skill-slug">${escapeHtml(s.slug)}</div>
+      </div>
+      <span class="skill-arrow" onclick="event.stopPropagation();showSkill(${i})"
+            title="看这个技能的详情">›</span>
+    </div>`;
+  };
+
+  document.getElementById('skillList').innerHTML =
+      (style.length ? grp('风格 · 点一下填在输入框最前面', style.length) + style.map(row).join('')  : '')
+    + (tool.length  ? grp('工具 · 点一下填在输入框最前面', tool.length) + tool.map(row).join('') : '');
+}
+
+/* ---------- 点技能 = 把「召唤词」填进输入框 ----------
+   2026-10-16 22:56 按用户决定：31 个技能行为统一，不再有「锁定」这种隐藏状态。
+   理由（实测）：用中文名点名风格 12/12 精确命中 —— 名字本身就是召唤词，
+   写进输入框比锁一个隐藏开关更好：看得见、能改、还能接着补充别的要求
+   （例如点「美食特写与吃播 ASMR」后再打「15 秒竖屏」）。
+   4 个工具技能没有「风格名」可填，各自给一句现成的说法。 */
+const SUMMON = {
+  'seedance-prompt-lint':         '帮我质检下面这段提示词：',
+  'seedance-prompt-library':      '用模板库里最合适的模板帮我写一条视频提示词：',
+  'seedance-storyboard-writer':   '把下面的内容改成视频剧本（分 3 集）：',
+  'seedance-production-workflow': '帮我规划一个完整的视频项目，从需求到成片：',
+};
+
+function fillSkill(i){
+  const s = S.skills[i];
+  if(!s) return;
+
+  const text = SUMMON[s.name] || (s.zh + ' 风格，');
+  const el   = document.getElementById('input');
+  const cur  = el.value;
+
+  /* 召唤词放【最前面】，你原来的内容跟在后面。
+     2026-10-17 修：原来是追加到末尾，输入框已有内容时会变成
+     「你说的话 + 帮我质检下面这段提示词：」—— 读起来是反的，也和页面提示
+     「把召唤词填进输入框，再在后面补上你的需求」对不上。
+     召唤词本身都以「：」或「，」结尾，正好引着后面的内容。 */
+  // 连点两次同一个技能：已经以这句开头就别再叠一遍（长句叠两遍很脏）
+  if(!cur.trim().startsWith(text.trim())){
+    el.value = cur.trim() ? (text + cur.replace(/^\s+/, '')) : text;
+  }
+  el.focus();
+  el.setSelectionRange(el.value.length, el.value.length);
+  autoGrow();
+
+  /* 短促闪一下，免得以为点了没反应 */
+  const node = document.querySelector(`.skill[data-name="${CSS.escape(s.name)}"]`);
+  if(node){
+    node.classList.add('flash');
+    setTimeout(()=>node.classList.remove('flash'), 420);
+  }
+}
+
+/* ---------- 技能详情 ---------- */
+function showSkill(i){
+  const s = S.skills[i];
+  if(!s) return;
+
+  // 把 description 按句号/分号拆成易读的几行
+  const desc = (s.description || '（无描述）').trim();
+
+  // 正文：剥掉 markdown 大标题，只留开头一段做预览
+  const body = (s.body_preview || s.body || '').trim();
+
+  document.getElementById('skDetailBody').innerHTML = `
+    <div class="sk-h">
+      <span class="nm">${escapeHtml(s.name)}</span>
+      ${s.references.length?`<span class="skill-badge has-ref">+${s.references.length} 附件</span>`:''}
+    </div>
+    <div class="sk-sub">目录名 ${escapeHtml(s.dir_name)} ｜ 正文 ${(s.body_chars/1000).toFixed(1)}k 字符</div>
+
+    <div class="sk-label">这个技能是干什么的</div>
+    <div class="sk-text">${escapeHtml(desc)}</div>
+
+    ${s.references.length?`
+      <div class="sk-label">附带参考资料</div>
+      ${s.references.map(r=>`
+        <div class="sk-ref">
+          <span class="rn">${escapeHtml(r.name)}</span>
+          <span class="rs">${(r.size/1024).toFixed(0)} KB</span>
+          <span class="rs" style="color:${r.inlined?'var(--ok,#3fb950)':'var(--warn,#d29922)'}">
+            ${r.inlined?'自动加载':'按需读取'}
+          </span>
+        </div>`).join('')}
+      <div style="font-size:11px;color:#5a6474;line-height:1.7;margin-top:6px">
+        ${s.references.some(r=>r.inlined)
+          ? '标记「自动加载」的资料会随技能一起发给模型，模型直接看得到全文。'
+          : ''}
+        ${s.references.some(r=>!r.inlined)
+          ? '标记「按需读取」的资料体积较大，模型需要时会自己去取。'
+          : ''}
+      </div>
+    `:''}
+
+    <div class="sk-label">技能内容（开头部分）</div>
+    <div class="sk-body-wrap">
+      <div class="sk-body-box" id="skBodyBox">${escapeHtml(body||'（正文为空）')}</div>
+      <div class="sk-fade"></div>
+    </div>
+  `;
+  document.getElementById('skillMask').classList.add('show');
+}
+function closeSkill(){ document.getElementById('skillMask').classList.remove('show'); }
+
+async function reloadSkills(){
+  const r = await fetch('/api/skills/reload',{method:'POST'}).then(r=>r.json());
+  await loadSkills();
+  toast(`已重新扫描，${r.count} 个技能`);
+}
+
+/* ============================== 发送 ============================== */
+function send(){
+  const el = document.getElementById('input');
+  const text = el.value.trim();
+  if(!text || S.busy) return;
+
+  /* 第 1 轮 · 选型：「带货：」「品牌：」「科普：」前缀，先把模板填好停在输入框，等你确认再按回车 */
+  const mt = text.match(/^(带货|品牌片?|宣传片|科普片?)\s*[:：]\s*([\s\S]*)$/);
+  if(mt){
+    const body = mt[2].trim();
+    const brackets = (body.match(/【/g) || []).length;
+    if(body && body.length <= 200 && brackets <= 2){
+      if(!ROUTING) routeOffer(mt[1], body);
+      return;
+    }
+  }
+
+  /* 第 3 轮 · 组合已确认：这一下才是真的生成 */
+  if(PENDING){
+    const skills = PENDING;
+    PICK_FORM = (TPLROUTE && TPLROUTE.form) || PICK_FORM;
+    PENDING = null;
+    hidePickBar();
+    hideTplBar();
+    realSend(text, el, skills);
+    return;
+  }
+
+  /* 第 2 轮 · 模板已就绪：先算技能组合，停下来等你看一眼 */
+  if(!SKIP_PICK && (TPLROUTE || PICK_FORM)){
+    if(!PICKING) pickPlan(text, (TPLROUTE && TPLROUTE.form) || PICK_FORM);
+    return;
+  }
+
+  hideTplBar();
+  realSend(text, el);
+}
+
+async function realSend(text, el, skills){
+  S.busy = true;
+  document.getElementById('send').disabled = true;
+  el.value=''; el.style.height='auto';
+  document.getElementById('empty')?.remove();
+  hideEx();
+
+  addUser(text);
+  const box = addAgentCard();
+
+  // 步骤条
+  const stepsEl = box.querySelector('.steps');
+  const STEPS = [
+    ['picking','① 选技能'],['picked','② 加载技能'],
+    ['generating','③ 生成提示词'],['linting','④ 质检'],
+    ['revising','⑤ 按质检修正'],['done','完成']
+  ];
+  stepsEl.innerHTML = STEPS.map(([k,l],i)=>
+    `<span class="step" data-k="${k}">${l}</span>`+(i<STEPS.length-1?'<span class="arrow">›</span>':'')
+  ).join('');
+
+  const setStep = (k, cls) => {
+    const el = stepsEl.querySelector(`[data-k="${k}"]`);
+    if(el){ el.classList.remove('doing','done','err'); if(cls) el.classList.add(cls); }
+  };
+
+  // 不属于本次流水线的步骤，直接标灰——别让它一直"转圈"
+  const skipStep = (k) => {
+    const el = stepsEl.querySelector(`[data-k="${k}"]`);
+    if(el){ el.classList.remove('doing','done','err'); el.classList.add('skip'); }
+  };
+
+  const body = box.querySelector('.result');
+  let pickSrc = null;      // 本轮技能是「手动指定 / 沿用上一轮 / 自动挑」的哪一种
+  /* 技能来源：第 2 轮确认过的组合（skills）优先；没有就交给系统自动挑 */
+  const payload = {
+    message: text,
+    skills: (skills && skills.length) ? skills : null,
+    do_lint: true,                                      // 始终自动质检
+    history: S.history.length ? S.history.slice(-8) : null,   // 多轮上下文
+    last_skills: S.lastSkills.length ? S.lastSkills : null,   // 追问兜底用
+  };
+
+  try{
+    const resp = await fetch('/api/stream',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    if(!resp.ok){
+      const e = await resp.json().catch(()=>({}));
+      throw new Error(e.detail || ('HTTP '+resp.status));
+    }
+
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+
+    while(true){
+      const {done, value} = await reader.read();
+      if(done) break;
+      buf += dec.decode(value,{stream:true});
+      const lines = buf.split('\n\n');
+      buf = lines.pop();
+      for(const line of lines){
+        if(!line.startsWith('data:')) continue;
+        const ev = JSON.parse(line.slice(5).trim());
+        handle(ev);
+      }
+    }
+  }catch(err){
+    body.innerHTML = `<div style="color:var(--bad)">出错了：${escapeHtml(err.message)}</div>`;
+  }finally{
+    S.busy = false;
+    document.getElementById('send').disabled = false;
+  }
+
+  function handle(ev){
+    switch(ev.stage){
+      case 'picking': setStep('picking','doing'); break;
+
+      case 'no_skill':
+        skipStep('picked'); skipStep('generating'); skipStep('linting'); skipStep('revising');
+        const nsErr = ev.kind === 'error';
+        body.insertAdjacentHTML('beforeend',
+          `<div style="font-size:12.5px;color:${nsErr?'var(--bad)':'var(--warn)'};margin-bottom:10px;line-height:1.7">
+             ${nsErr?'❌':'⚠'} ${escapeHtml(ev.reason || '没找到能完成这个需求的技能')}<br>
+             <span style="color:var(--dim)">${escapeHtml(ev.hint || '换个说法描述')}</span>
+           </div>`);
+        break;
+
+      case 'expanded':
+        body.insertAdjacentHTML('beforeend',
+          `<div style="font-size:11.5px;color:var(--dim);margin-bottom:10px">
+             ⇢ 技能顺序整理：${escapeHtml((ev.from||[]).join('、'))} <span style="opacity:.5">→</span> <b style="color:var(--accent)">${escapeHtml((ev.to||[]).join('、'))}</b>
+           </div>`);
+        break;
+
+      case 'picked':
+        setStep('picking','done');
+        pickSrc = ev.source;
+        if(ev.skills?.length){
+          setStep('picked','done');
+          const srcMap = {user:'（第2轮已确认）', reuse:'（沿用上一轮）'};
+          const src = srcMap[ev.source] || '';
+          const tip = ev.source === 'reuse'
+            ? '<div style="font-size:11px;color:#5a6474;margin-top:3px">这句话接着上一轮说，沿用了同样的技能。</div>'
+            : '';
+          body.insertAdjacentHTML('beforeend',
+            `<div style="font-size:11.5px;color:var(--dim);margin-bottom:10px">
+              已加载技能${src}：${ev.skills.map(s=>`<b style="color:var(--accent)">${escapeHtml(s)}</b>`).join('、')}${tip}
+             </div>`);
+        }
+        break;
+
+      case 'generating': setStep('generating','doing'); break;
+      case 'generated': setStep('generating','done'); break;
+
+      case 'linting': setStep('linting','doing'); break;
+      case 'linted': setStep('linting','done'); break;
+
+      case 'lint_skipped':
+        skipStep('linting');
+        skipStep('revising');
+        body.insertAdjacentHTML('beforeend',
+          `<div style="font-size:11.5px;color:var(--dim);margin-bottom:10px">
+             — 本次没有选中质检技能，已跳过质检与修正
+           </div>`);
+        break;
+
+      /* ⑤ 修正：质检报告是「诊断书」，这一步产出「改好的成稿」。
+         2026-10-17 网页端补齐 —— 此前只有飞书有这一段。 */
+      case 'revising': setStep('revising','doing'); break;
+      case 'revised':  setStep('revising','done'); break;
+      case 'revise_skipped':
+        skipStep('revising');
+        body.insertAdjacentHTML('beforeend',
+          `<div style="font-size:11.5px;color:var(--dim);margin-bottom:10px">
+             — ${escapeHtml(ev.reason || '本次没有产出修正稿')}
+           </div>`);
+        break;
+
+      case 'done':
+        render(ev.result);
+        rememberTurn(text, ev.result);   // 记进上下文，下一句才能"接着改"
+        break;
+      case 'error':
+        body.innerHTML = `<div style="color:var(--bad)">${escapeHtml(ev.message)}</div>`;
+        stepsEl.querySelectorAll('.doing').forEach(e=>{e.classList.remove('doing');e.classList.add('err')});
+        break;
+    }
+  }
+
+  function render(res){
+    const g = res.generate;
+
+    // 没选出技能：不兜底，直接告诉用户该怎么做
+    if(!g){
+      /* 原因分四类（见 agent._no_skill_text）：
+         error = 选技能的服务出错，该查服务；
+         其余三种 = 技能库/名称/需求描述的问题，该改这边。别让人去查错方向。 */
+      const isErr = res.reason_kind === 'error';
+      const col  = isErr ? 'var(--bad)' : 'var(--warn)';
+      const icon = isErr ? '❌' : '⚠';
+
+      /* 没匹配到就把这句还回输入框 —— 改两个字重发，不用整段重敲。
+         只在输入框还空着时还：你可能趁生成那几秒已经打了新内容，别覆盖掉。 */
+      let restored = false;
+      if(!el.value.trim()){
+        el.value = String(text);
+        autoGrow();
+        try{ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }catch(ignore){}
+        restored = true;
+      }
+
+      body.innerHTML =
+        `<div style="font-size:13px;color:${col};line-height:1.9;white-space:pre-wrap">`+
+        `${icon} ${escapeHtml(res.message || '没找到合适的技能来完成这个需求。')}</div>`+
+        (restored
+          ? `<div style="font-size:11.5px;color:var(--dim);margin-top:8px">已把刚才那句填回输入框，改两个字直接发就行。</div>`
+          : '');
+      scrollBottom();
+      return;
+    }
+
+    let html = '';
+
+    // 本轮用了哪个技能。生成过程中已经显示过一行，但下面 body.innerHTML 会把它冲掉，
+    // 所以在这里补回来 —— 这一轮到底用了哪个技能，看得见才放心。
+    const used = res.skills_used || [];
+    if(used.length){
+      const tag = pickSrc === 'user'  ? '（手动指定风格）'
+                : pickSrc === 'reuse' ? '（沿用上一轮）'
+                :                       '（自动挑选）';
+      html += `<div style="font-size:11.5px;color:var(--dim);margin-bottom:9px">
+        已加载技能${tag}：<b style="color:var(--accent)">${escapeHtml(used.map(zhOfName).join('、'))}</b>
+      </div>`;
+    }
+
+    // 只要求「检查这段提示词」时，产出物本身就是质检报告，别再标成「分镜提示词」
+    if(res.lint_only){
+      html += section('🔍 质检报告', g.content, 'md');
+      html += metaLine(g);
+    }else{
+      html += section('🎬 分镜提示词', g.content, 'md', {copy:true});
+      html += metaLine(g);
+
+      if(res.lint){
+        html += section('🔍 质检报告', res.lint.content, 'md');
+      }
+
+      /* ③ 纠正后的提示词 —— 用户要的最终交付物。
+         2026-10-17 补齐：此前网页端跑完质检就结束，只有飞书会出这一段。 */
+      const rev = res.revision;
+      if(rev && rev.revised){
+        html += section('✅ 纠正后的提示词（复制即用）', rev.revised, 'md', {copy:true});
+        if(rev.issues){
+          html += `<details style="margin:-10px 0 16px">
+            <summary style="cursor:pointer;font-size:11.5px;color:var(--dim)">查看本次按质检改了哪些问题</summary>
+            <div class="card-body md" style="margin-top:8px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 13px;font-size:12px">${md(rev.issues)}</div>
+          </details>`;
+        }
+      }else if(rev && rev.issues){
+        html += section('⚠ 需要改的问题（未出修正稿）', rev.issues, 'md');
+      }
+    }
+    body.innerHTML = html;
+    scrollBottom();
+  }
+}
+
+/* ============================== 渲染工具 ============================== */
+function addUser(text){
+  const el = document.createElement('div');
+  el.className='msg user';
+  el.innerHTML = `<div class="bubble">${escapeHtml(text)}</div>`;
+  document.getElementById('feedInner').appendChild(el);
+  scrollBottom();
+}
+
+function addAgentCard(){
+  const el = document.createElement('div');
+  el.className='msg';
+  el.innerHTML = `
+    <div class="card">
+      <div class="card-head">${'🤖'} <b>智能体</b></div>
+      <div class="steps"></div>
+      <div class="result" style="padding:14px 16px"></div>
+    </div>`;
+  document.getElementById('feedInner').appendChild(el);
+  scrollBottom();
+  return el;
+}
+
+/* 复制按钮：把「复制即用」落到实处，省得用户手动划选 */
+const COPY_STORE = {};
+let copySeq = 0;
+
+/* 模型常把提示词整段包在 ``` 代码块里；复制时要去掉围栏，
+   否则用户粘贴到视频平台会带上三个反引号。 */
+function unfence(t){
+  const s = String(t || '').trim();
+  if(s.startsWith('```')){
+    const body = s.slice(3).replace(/^[^\n]*\n/, '');        // 去掉 ```lang 这一行
+    return body.replace(/```\s*$/, '').trim();
+  }
+  return s;
+}
+
+function section(title, content, cls, opts){
+  const wantCopy = !!(opts && opts.copy);
+  if(wantCopy) content = unfence(content);
+  let btn = '';
+  if(wantCopy){
+    const k = 'c' + (++copySeq);
+    COPY_STORE[k] = content || '';
+    btn = `<button class="copy-btn" data-k="${k}" onclick="copySection(this)">复制</button>`;
+  }
+  return `<div style="margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:700;margin-bottom:9px;color:var(--fg)">
+        <span>${title}</span>${btn}
+      </div>
+      <div class="card-body md" style="background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:13px 15px">${md(content)}</div>
+    </div>`;
+}
+
+function copySection(btn){
+  const text = COPY_STORE[btn.dataset.k] || '';
+  const ok = () => { btn.textContent = '已复制 ✓'; setTimeout(()=>{ btn.textContent = '复制'; }, 1500); };
+  const fallback = () => {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.select();
+    try{ document.execCommand('copy'); ok(); }
+    catch(e){ alert('复制失败，请手动选中文本复制'); }
+    document.body.removeChild(ta);
+  };
+  if(navigator.clipboard && window.isSecureContext){
+    navigator.clipboard.writeText(text).then(ok).catch(fallback);
+  }else{
+    fallback();
+  }
+}
+
+function metaLine(g){
+  const parts = [];
+  if(g.elapsed) parts.push(`⏱ ${g.elapsed}s`);
+  if(g.tokens?.prompt) parts.push(`↑${g.tokens.prompt} / ↓${g.tokens.completion} tokens`);
+  parts.push(`system ${(g.system_chars/1000).toFixed(1)}k 字符`);
+  const tr = (g.truncated || []).slice();
+  if(tr.length){
+    /* truncated 里是「技能::文件名」，references_read 里是「技能/文件名」，统一成 / 再比 */
+    const read = (g.references_read || []).map(x => String(x).replace('::','/'));
+    const missed = tr.filter(t => !read.includes(String(t).replace('::','/')));
+    const color = missed.length ? 'var(--warn)' : '#5a6474';
+    parts.push(`<span style="color:${color}">⚠ 未内联 ${tr.length} 份 · 已补读 ${tr.length-missed.length}/${tr.length}` +
+      (missed.length ? `（未读：${missed.join(',')}）` : '') + `</span>`);
+  }
+  return `<div style="font-size:10.5px;color:#5a6474;margin:-8px 0 4px">${parts.join(' · ')}</div>`;
+}
+
+/* 超轻量 markdown */
+function md(t){
+  if(!t) return '';
+  let s = escapeHtml(t);
+  s = s.replace(/```(\w*)\n([\s\S]*?)```/g, (m,l,c)=>`<pre><code>${c.trim()}</code></pre>`);
+  s = s.replace(/`([^`\n]+)`/g,'<code>$1</code>');
+  s = s.replace(/^### (.+)$/gm,'<h3>$1</h3>');
+  s = s.replace(/^## (.+)$/gm,'<h2>$1</h2>');
+  s = s.replace(/^# (.+)$/gm,'<h1>$1</h1>');
+  s = s.replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>');
+  s = s.replace(/^[-*] (.+)$/gm,'<li>$1</li>');
+  s = s.replace(/(<li>[\s\S]*?<\/li>)(?!\s*<li>)/g, '<ul>$1</ul>');
+  s = s.replace(/^---$/gm,'<hr>');
+  // 段落
+  s = s.split(/\n{2,}/).map(p=>{
+    if(/^\s*<(h\d|ul|pre|hr|table|div)/.test(p)) return p;
+    return `<p>${p.replace(/\n/g,'<br>')}</p>`;
+  }).join('');
+  return s;
+}
+
+function escapeHtml(s){
+  return String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function scrollBottom(){
+  const f = document.getElementById('feed');
+  requestAnimationFrame(()=>f.scrollTop = f.scrollHeight);
+}
+function clearFeed(){
+  document.getElementById('feedInner').innerHTML =
+    `<div class="empty" id="empty"><h2>说一句话，我给你分镜提示词</h2>
+       <p>参考例子描述需求（点底栏按钮可一键填入模板）：<br>
+       <b>带货例子</b>：带货口播15秒竖屏：真人测评【产品】——外观拆件；前3秒钩子＝变化动作＋声音；质感二选一<br>
+       <b>品牌例子</b>：品牌视频总长1–2分钟16:9（拆成3–4段，每段≤30秒逐段生成）＋分幕故事线＋主角外观参照物<br>
+       <b>科普例子</b>：科普讲解总长3–5分钟（拆成6–10段，一段一个知识点）：讲师人设讲主题＋知识点①②③＋准确性红线<br>
+       系统会自动挑选技能包并自检。写完可以接着说「再短一点」继续改。</p></div>`;
+  S.history = [];
+  S.lastSkills = [];
+  hideTplBar();
+  hidePickBar();
+  hideEx();
+  PENDING = null; PICKPLAN = null; PICK_FORM = null;
+  updateMemChip();
+}
+
+/* ============================== 设置 ============================== */
+async function openConfig(){
+  const c = await fetch('/api/config').then(r=>r.json());
+  document.getElementById('cfgUrl').value = c.base_url;
+  document.getElementById('cfgModel').value = c.model;
+  document.getElementById('cfgKey').value = '';
+  document.getElementById('cfgKey').placeholder = c.api_key_ready ? `当前 ${c.api_key_masked}（留空不改）` : '还没配置，请填入';
+  document.getElementById('mask').classList.add('show');
+}
+function closeConfig(){ document.getElementById('mask').classList.remove('show'); }
+async function saveConfig(){
+  const body = {
+    base_url: document.getElementById('cfgUrl').value.trim(),
+    model: document.getElementById('cfgModel').value.trim(),
+  };
+  const k = document.getElementById('cfgKey').value.trim();
+  if(k) body.api_key = k;
+  await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  closeConfig();
+  toast('已保存');
+}
+
+/* ============================== 检查更新 ============================== */
+/* 时间分两个，别混：
+   - dataVersion.exportedAt：上游数据的版本，只有真有新数据才会变
+   - checkedAt：上次检查的时间，每点一次都会变
+   两个都显示，就不会出现「数据其实是旧的、界面却显示刚刚」的误导。 */
+
+function fmtClock(iso){
+  if(!iso) return '';
+  const d = new Date(iso);
+  if(isNaN(d.getTime())) return '';
+  const hm = String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+  const now = new Date();
+  if(d.toDateString() === now.toDateString()) return '今天 ' + hm;
+  const md = String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  return md + ' ' + hm;
+}
+
+function fmtDataVer(v){
+  if(!v || !v.exportedAt) return '';
+  const day = String(v.exportedAt).slice(0,10);
+  return v.caseCount ? `${day}（${v.caseCount} 条）` : day;
+}
+
+function renderUpdateStatus(s){
+  const el = document.getElementById('updateMeta');
+  if(!el) return;
+  const parts = [];
+  parts.push(s && s.dataVersion && s.dataVersion.exportedAt
+    ? '数据 ' + fmtDataVer(s.dataVersion) : '数据 未知');
+  parts.push(s && s.checkedAt ? '检查 ' + fmtClock(s.checkedAt) : '从未检查');
+  el.textContent = parts.join(' · ');
+  el.style.color = (s && s.ok === false) ? 'var(--bad)' : '#5a6474';
+  el.title = (s && s.message) ? s.message : '';
+}
+
+async function loadUpdateStatus(){
+  try{
+    renderUpdateStatus(await fetch('/api/update/status').then(r=>r.json()));
+  }catch(e){
+    renderUpdateStatus({ ok:false, message:'读不到状态：' + e.message });
+  }
+}
+
+function askUpdate(){ document.getElementById('updateMask').classList.add('show'); }
+function closeAskUpdate(){ document.getElementById('updateMask').classList.remove('show'); }
+
+async function runUpdate(){
+  closeAskUpdate();
+  const btn = document.getElementById('updateBtn');
+  const meta = document.getElementById('updateMeta');
+  const keep = { text: meta.textContent, color: meta.style.color };
+
+  btn.disabled = true;
+  btn.textContent = '检查中…';
+  meta.textContent = '正在连接上游，大约十几秒…';
+  meta.style.color = 'var(--dim)';
+
+  try{
+    const resp = await fetch('/api/update/run', { method:'POST' });
+    if(!resp.ok){
+      const e = await resp.json().catch(()=>({}));
+      throw new Error(e.detail || ('HTTP ' + resp.status));
+    }
+    const s = await resp.json();
+    renderUpdateStatus(s);
+
+    if(s.changed){
+      toast(s.message || '已同步上游新数据');
+      await loadSkills();              // 技能内容变了，刷新左侧列表
+    }else if(s.ok === false){
+      toast('检查失败：' + (s.message || '未知原因'));
+    }else{
+      toast(s.message || '已是最新');
+    }
+  }catch(err){
+    meta.textContent = keep.text;
+    meta.style.color = keep.color;
+    toast('检查失败：' + err.message);
+  }finally{
+    btn.disabled = false;
+    btn.textContent = '检查更新';
+  }
+}
+
+/* ============================== 视图切换 ============================== */
+function switchView(v){
+  CUR_VIEW = v;
+  const chat = (v === 'chat');
+  document.getElementById('chatView').style.display = chat ? '' : 'none';
+  document.getElementById('casesView').style.display = chat ? 'none' : '';
+  document.getElementById('chatTools').style.display = chat ? '' : 'none';
+  document.getElementById('caseTools').style.display = chat ? 'none' : '';
+  document.getElementById('tabChat').classList.toggle('active', chat);
+  document.getElementById('tabCases').classList.toggle('active', !chat);
+  updateMemChip();
+  if(chat){
+    document.getElementById('input').focus();
+  }else if(!C.inited){
+    loadCases(true);
+  }
+}
+
+/* ============================== 案例库 ============================== */
+/* 数据来自 /api/cases（轻量列表）+ /api/cases/{slug}（完整 prompt）。
+   缩略图全部懒加载，视频只在打开详情时才创建 —— 834 条一次全渲染会把浏览器拖死。 */
+
+const CASE_PAGE = 60;
+const CASE_VERDICT = {
+  reproduced:  { t:'复现成功', c:'good' },
+  degraded:    { t:'有降级',   c:'mid'  },
+  failed:      { t:'复现失败', c:'bad'  },
+  inconclusive:{ t:'不确定',   c:'mid'  },
+};
+
+const C = {
+  items: [], total: 0, offset: 0,
+  loading: false, hasMore: true, inited: false,
+  facets: null, detail: null,
+  sel: { model:'', template:'', level:'', creator:'' },
+  q: '', sort: 'hot',
+  timer: null,
+};
+
+function csUrl(){
+  const p = new URLSearchParams();
+  if(C.q) p.set('q', C.q);
+  p.set('sort', C.sort);
+  for(const k in C.sel){ if(C.sel[k]) p.set(k, C.sel[k]); }
+  p.set('offset', C.offset);
+  p.set('limit', CASE_PAGE);
+  return '/api/cases?' + p.toString();
+}
+
+async function loadCases(reset){
+  if(C.loading) return;
+
+  if(reset){
+    C.offset = 0; C.items = []; C.hasMore = true;
+    document.getElementById('caseGrid').innerHTML = '';
+    document.getElementById('caseMore').textContent = '读取中…';
+  }
+  if(!C.hasMore) return;
+
+  C.loading = true;
+  try{
+    const resp = await fetch(csUrl());
+    if(!resp.ok){
+      // 404 基本都是「服务进程还是旧代码」——静态页从磁盘现读，接口却是启动时注册的
+      const e = await resp.json().catch(()=>({}));
+      throw new Error(
+        (e.detail ? e.detail + ' — ' : '') + 'HTTP ' + resp.status
+        + (resp.status === 404 ? '（多半是服务还在跑改代码之前的进程，重启一下 run.py）' : '')
+      );
+    }
+    const r = await resp.json();
+    const items = Array.isArray(r.items) ? r.items : [];
+
+    if(!C.inited){
+      C.inited = true;
+      const n = r.dataVersion && r.dataVersion.caseCount;
+      if(n) document.getElementById('tabCaseCount').textContent = n;
+    }
+    if(!C.facets && r.facets){ C.facets = r.facets; renderCaseFilters(); }
+
+    C.total = r.total;
+    C.items = C.items.concat(items);
+    C.offset = C.items.length;
+    C.hasMore = r.hasMore;
+
+    document.getElementById('caseGrid').insertAdjacentHTML('beforeend', items.map(caseCard).join(''));
+    document.getElementById('caseMore').textContent = C.hasMore
+      ? '滚动到底自动加载下一批'
+      : (C.total ? `— 共 ${C.total} 条，已经到底了 —` : '没有符合条件的案例，换个词试试');
+  }catch(e){
+    document.getElementById('caseMore').textContent = '加载失败：' + e.message;
+  }finally{
+    C.loading = false;
+  }
+}
+
+function caseCard(c){
+  const lvl = c.level === 'L2' ? ' l2' : '';
+  const heat = (c.heat !== null && c.heat !== undefined)
+    ? `<span class="c-hot">热度 ${Math.round(c.heat)}</span>` : '';
+  const tpl = c.templateName ? `<div class="c-tpl">${escapeHtml(c.templateName)}</div>` : '';
+  const rt = c.retestCount ? ` · 复现 ${c.retestCount}` : '';
+  return `<div class="c-card" onclick="openCase('${escapeHtml(c.slug)}')" title="${escapeHtml(c.title)}">
+    <div class="c-thumb">
+      <div class="ph">封面读取中</div>
+      <img loading="lazy" src="${escapeHtml(c.poster)}" alt=""
+           onload="this.classList.add('on');this.previousElementSibling.style.display='none'"
+           onerror="var p=this.previousElementSibling; if(p)p.textContent='封面加载失败'; this.remove()">
+      <span class="c-tag${lvl}">Seedance ${escapeHtml(c.model)}${c.level ? ' · ' + escapeHtml(c.level) : ''}</span>
+      ${heat}
+    </div>
+    <div class="c-info">
+      <div class="c-title">${escapeHtml(c.title)}</div>
+      ${tpl}
+      <div class="c-sub">${escapeHtml(c.creator || '—')}${rt}</div>
+    </div>
+  </div>`;
+}
+
+function renderCaseFilters(){
+  const f = C.facets;
+  if(!f || !Array.isArray(f.models) || !Array.isArray(f.templates)) return;
+  f.levels = Array.isArray(f.levels) ? f.levels : [];
+  f.creators = Array.isArray(f.creators) ? f.creators : [];
+  const chip = (k, v, label, n) =>
+    `<span class="fchip${C.sel[k] === v ? ' active' : ''}" data-k="${k}" data-v="${escapeHtml(v)}">${label}${n ? `<span class="n">${n}</span>` : ''}</span>`;
+
+  const l2 = (f.levels.find(x=>x.v === 'L2') || {}).n || 0;
+  const l1 = (f.levels.find(x=>x.v === 'L1') || {}).n || 0;
+
+  const rows = [
+    `<div class="frow"><span class="fl">版本</span>`
+      + chip('model','','全部', f.models.reduce((a,b)=>a+b.n,0))
+      + f.models.map(m=>chip('model', m.v, 'Seedance ' + m.v, m.n)).join('')
+      + `<span style="width:8px"></span><span class="fl" style="min-width:auto">证据</span>`
+      + chip('level','L2','L2 人审实测', l2)
+      + chip('level','L1','L1', l1)
+    + `</div>`,
+    `<div class="frow"><span class="fl">分类</span>`
+      + chip('template','','全部', f.templates.reduce((a,b)=>a+b.n, 0))
+      + f.templates.map(t=>chip('template', t.id, escapeHtml(t.name), t.n)).join('')
+    + `</div>`,
+    `<div class="frow"><span class="fl">作者</span>`
+      + chip('creator','','全部', '')
+      + f.creators.slice(0, 14).map(c=>chip('creator', c.v, escapeHtml(c.v), c.n)).join('')
+    + `</div>`,
+  ];
+
+  const box = document.getElementById('caseFilters');
+  box.innerHTML = rows.join('');
+  box.querySelectorAll('.fchip').forEach(el=>{
+    el.onclick = ()=>{
+      const k = el.dataset.k, v = el.dataset.v;
+      C.sel[k] = (C.sel[k] === v) ? '' : v;      // 再点一次 = 取消
+      box.querySelectorAll(`.fchip[data-k="${k}"]`)
+         .forEach(x=>x.classList.toggle('active', x.dataset.v === C.sel[k]));
+      loadCases(true);
+    };
+  });
+}
+
+function onCaseSearch(){
+  clearTimeout(C.timer);
+  C.timer = setTimeout(()=>{ C.q = document.getElementById('cq').value.trim(); loadCases(true); }, 300);
+}
+
+function onCaseSort(){
+  C.sort = document.getElementById('cqSort').value;
+  loadCases(true);
+}
+
+function resetCaseFilters(){
+  C.q = ''; C.sort = 'hot';
+  C.sel = { model:'', template:'', level:'', creator:'' };
+  document.getElementById('cq').value = '';
+  document.getElementById('cqSort').value = 'hot';
+  renderCaseFilters();
+  loadCases(true);
+}
+
+document.getElementById('caseScroll').addEventListener('scroll', e=>{
+  const el = e.target;
+  if(el.scrollTop + el.clientHeight > el.scrollHeight - 400) loadCases(false);
+});
+
+/* ---------- 详情 ---------- */
+async function openCase(slug){
+  const head = document.getElementById('caseHead');
+  const body = document.getElementById('caseBody');
+  head.innerHTML = '案例详情';
+  body.innerHTML = '<div style="padding:40px;color:#5a6474;font-size:12.5px">读取中…</div>';
+  document.getElementById('caseMask').classList.add('show');
+
+  try{
+    const c = await fetch('/api/cases/' + encodeURIComponent(slug)).then(r=>r.json());
+    if(c.detail) throw new Error(c.detail);
+    C.detail = c;
+    renderCase(c);
+  }catch(e){
+    body.innerHTML = `<div style="color:var(--bad);font-size:12.5px">打不开这条案例：${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function closeCase(){
+  document.getElementById('caseMask').classList.remove('show');
+  document.getElementById('caseBody').innerHTML = '';   // 连视频一起清掉，免得后台还在播
+  C.detail = null;
+}
+
+function renderCase(c){
+  document.getElementById('caseHead').innerHTML =
+    escapeHtml(c.title).slice(0, 70)
+    + '<span style="float:right;cursor:pointer;color:var(--dim);font-weight:400" onclick="closeCase()">✕ 关闭</span>';
+
+  const meta = [];
+  const ver = (c.models && c.models.length > 1) ? `（${c.models.join('、')}）` : '';
+  meta.push(`版本 <b>${escapeHtml(c.model)}</b>${escapeHtml(ver)}`);
+  if(c.templateName) meta.push('类别 <b>' + escapeHtml(c.templateName) + '</b>');
+  if(c.evidenceLevel) meta.push('证据 <b>' + escapeHtml(c.evidenceLevel) + '</b>');
+  if(c.stabilityScore !== null && c.stabilityScore !== undefined) meta.push('稳定度 <b>' + Math.round(c.stabilityScore) + '</b>');
+  if(c.heatScore !== null && c.heatScore !== undefined) meta.push('热度 <b>' + Math.round(c.heatScore) + '</b>');
+  meta.push('作者 <b>' + escapeHtml(c.creator || '—') + '</b>');
+  if(c.publishedAt) meta.push('发布 ' + escapeHtml(String(c.publishedAt).slice(0, 10)));
+
+  const retests = (c.retests || []).map(r=>{
+    const v = CASE_VERDICT[r.verdict] || { t: r.verdict || '—', c: 'mid' };
+    return `<div class="cretest">
+      <span class="v ${v.c}">${escapeHtml(v.t)}</span>
+      <span style="color:var(--dim)">${escapeHtml(r.model)}</span>
+      ${r.score !== null && r.score !== undefined ? `<span style="color:var(--dim)">${Math.round(r.score)} 分</span>` : ''}
+      <span style="color:#5a6474">${escapeHtml(String(r.testedAt).slice(0, 10))}</span>
+      <span style="flex:1"></span>
+      ${r.artifactUrl ? `<a class="clink" href="${escapeHtml(r.artifactUrl)}" target="_blank" rel="noreferrer">看复现产物 →</a>` : ''}
+    </div>`;
+  }).join('');
+
+  document.getElementById('caseBody').innerHTML = `
+    <div>
+      <video class="case-video" controls preload="none"
+             poster="${escapeHtml(c.posterUrl)}" src="${escapeHtml(c.mediaUrl)}"></video>
+      <div class="cmeta" style="margin-top:12px">${meta.join(' ｜ ')}</div>
+
+      <div class="csec">这条案例在讲什么</div>
+      <div style="font-size:12.5px;line-height:1.85;color:#c9d1d9">${escapeHtml(c.summary || '（上游没给摘要）')}</div>
+
+      ${(c.tags || []).length ? `<div class="ctagline" style="margin-top:10px">标签 ${c.tags.map(t=>escapeHtml(t)).join(' · ')}</div>` : ''}
+
+      ${retests ? `<div class="csec">复现验证（换个模型再跑一遍的结果）</div>${retests}` : ''}
+    </div>
+
+    <div>
+      <div class="csec" style="margin-top:0">完整 prompt（${c.promptChars} 字符 · ${c.promptLines} 行）</div>
+      <div class="cprompt">${escapeHtml(c.promptFull || '（空）')}</div>
+      <div style="margin-top:12px;display:flex;gap:16px;flex-wrap:wrap">
+        <a class="clink" href="${escapeHtml(c.goodcaseUrl)}" target="_blank" rel="noreferrer">在 goodcase.ai 看这条 →</a>
+        <a class="clink" href="${escapeHtml(c.sourceUrl)}" target="_blank" rel="noreferrer">原作者原帖 →</a>
+      </div>
+      <div class="ctagline" style="margin-top:12px;line-height:1.85">
+        想要一条类似的？点下面的「用这条生成」，这条的写法会带回聊天窗口，让智能体照着它给你写一条新的。
+      </div>
+    </div>`;
+}
+
+async function copyCasePrompt(){
+  const t = (C.detail && C.detail.promptFull) || '';
+  if(!t){ toast('还没加载出来'); return; }
+  try{
+    await navigator.clipboard.writeText(t);
+    toast(`已复制完整 prompt（${t.length} 字符）`);
+  }catch(e){
+    const ta = document.createElement('textarea');
+    ta.value = t; ta.style.cssText = 'position:fixed;left:-9999px';
+    document.body.appendChild(ta); ta.select();
+    try{ document.execCommand('copy'); toast(`已复制完整 prompt（${t.length} 字符）`); }
+    catch(e2){ toast('复制失败，请手动选中文案复制'); }
+    ta.remove();
+  }
+}
+
+function useCase(){
+  const c = C.detail;
+  if(!c){ toast('还没加载出来'); return; }
+
+  const LIMIT = 6000;                       // 太长就节选，别把上下文顶爆
+  const full = c.promptFull || '';
+  const body = full.slice(0, LIMIT);
+  const cut = full.length > LIMIT ? '\n（以上为节选，完整版可用「复制完整 prompt」拿到）' : '';
+  const msg =
+`参考下面这条案例的写法，帮我写一条同类型的分镜提示词。
+
+【参考案例】${c.title}
+【类别】${c.templateName || '—'}
+【参考原文】
+${body}${cut}
+
+【我的需求】把这句话换成你的主题（产品/人物/场景/时长/画幅），然后直接发送。`;
+
+  closeCase();
+  switchView('chat');
+  const el = document.getElementById('input');
+  el.value = msg;
+  autoGrow();
+  el.focus();
+  toast('已放进输入框 · 把【我的需求】改成你的主题再发送');
+}
+
+/* ============================== 杂项 ============================== */
+/* ============================== 底栏模板（8 种带货形式 + 品牌 / 科普） ============================== */
+const TPL = {
+t1: `带货口播【15-30】秒竖屏：真人测评【产品名】
+产品拆件：【袋身材质颜色（含“偏紫罗兰，never 纯蓝”这类锚）／盖子结构／内容物颜色质地】
+出镜人设：【性别＋年龄段＋身份＋穿搭，如：28岁女营养师，燕麦针织＋亚麻围裙】
+核心卖点（只选1个）：【如：整果打浆＋益生菌发酵，花青素更好吸收】
+前3秒钩子＝【一个变化动作＋一个声音，如：拧盖“啵”一声，紫红液体涌出袋口特写】
+中段演示：【动作链：倒半杯对光看挂壁→喝一口回味→指袋身讲卖点】
+收尾：产品独占画面一拍→人拿产品看镜头＋【一句引导语】
+她说话像聊天分享、不像广告，例句：“喝完嘴里不齁，像蓝莓果泥很清爽”
+质感二选一：【手机实拍测评感／投放级广告感】
+合规红线：不说治疗/改善/增强免疫力/通便；画面不渲字，价格卖点字卡后期贴`,
+
+t2: `带货开箱【20-30】秒竖屏：手部特写开箱【产品名】
+产品拆件：【快递箱/礼盒 ＋ 袋身材质颜色／盖子／内容物】
+出镜方式：只露手与半身，不露全脸；【手部特征：指甲干净、无夸张饰品】
+前3秒钩子＝【划开包裹“嗤啦”声＋箱盖翻开、第一件产品露出一角】
+开箱序列（顺序不能乱）：划开封条→取出【几袋】→撕开单袋外膜→拿出产品→正反面各转一次给镜头
+中段演示：【逐个展示袋身/盖子/倒出液体】＋【一句体感台词】
+收尾：【几袋产品在桌面排成一排的全景】→手拿起一袋转向镜头＋【一句引导语】
+他说话像聊天分享、不像广告，例句：“【体感描述，如：不齁，像果泥】”
+质感二选一：【手机实拍测评感／投放级广告感】
+合规红线：不说治疗/改善/增强免疫力/通便；袋面只说“有印刷”不指定文字；画面不渲字`,
+
+t3: `带货剧情总长【30-60】秒（拆2段，每段≤30秒，本次先写第【1】段）【16:9或竖屏】
+产品：【产品名】＋产品拆件【袋身材质颜色／盖子／内容物】
+场景设定：【时间＋地点＋人物＋正在发生的小事，如：周三早7点半，厨房，女儿上学前手忙脚乱】
+角色：【1-2人外观：年龄、发型、服装；同一角色全片不换装】
+前3秒钩子＝【有悬念的情境，不是产品特写，如：妈妈一手拎书包一手翻冰箱，什么都没找到】
+产品怎么自然出现：【拉开冰箱最下层顺手拿到→单手拧盖→仰头喝一口→长舒一口气】
+卖点怎么带出来：【台词顺口一句，或镜头推近袋身（字后期贴），不打断剧情】
+收尾：回到产品＋【一句点题的话，如：忙的时候，至少这口是对的】
+台词像日常对话、不像广告，例句：“【一句生活化台词】”
+质感二选一：【手机实拍测评感／投放级广告感】
+合规红线：不说治疗/改善/增强免疫力/通便；画面不渲字，价格卖点字卡后期贴`,
+
+t4: `带货Vlog总长【45-60】秒（拆2段，每段≤30秒，本次先写第【1】段）竖屏
+产品：【产品名】＋产品拆件【袋身材质颜色／盖子／内容物】
+主角人设：【年龄＋职业感＋穿搭，如：30岁新媒体运营，灰卫衣＋棒球帽】
+拍摄风格：手持跟拍、自然光、轻微晃动与对焦漂移（手机实拍感，不要电影感）
+时间线3个片段：【07:20 出门前 → 12:40 工位下午 → 18:30 回家路上】
+产品出现位置：第【2】段自然入镜，方式：【从包里掏出／桌上早已放着一袋】
+台词方式：前半段旁白式自言自语（“今天又是三场会”），产品出现时转成【对口播一句】
+收尾：【回到桌面，产品在旁边，镜头缓缓停下】＋【一句轻收尾】
+说人话、别广告腔，例句：“【一句日常感叹】”
+合规红线：不说治疗/改善/增强免疫力/通便；画面不渲字`,
+
+t5: `带货产品片【15-30】秒【16:9或竖屏】：无人物出镜
+产品：【产品名】
+产品拆件：【袋身材质（哑光/亮面）、袋身颜色（含 never 纯蓝 这类锚）、盖子结构与颜色、内容物颜色与质地】
+环境与布景：【深灰石材台面＋一束侧逆光／纯色背景＋水花】
+美学词（开头定调）：【premium beauty-commercial／clean minimal／暗调高级感 三选一】
+前3秒钩子＝【一个强烈产品动态，如：袋身从上方落下、稳稳立住，袋内液体晃出漩涡】
+中段质感镜头（3-4个，一拍一种物理效果）：【光扫过哑光袋身／紫红液体冲入玻璃杯／杯壁冷凝水珠滑落】
+收尾：【产品定格英雄帧，留干净空白区给后期字卡】——画面不渲任何文字
+合规红线：不说任何功效词；画面不渲字，价格卖点字卡后期贴`,
+
+t6: `带货ASMR【15-30】秒竖屏：只出手部与近景，不露全脸
+产品：【产品名】＋【袋身材质颜色／盖子／内容物颜色质地（挂壁、果肉感）】
+镜头：微距/探针镜头感，浅景深，声音优先
+画面-声音配对（铁律：一拍一个可见变化＋一个配套声音）：
+ 1 手指扣住螺旋盖 → 拧开“啵”的一声
+ 2 液体倒进玻璃杯 → 连续的“咕咚”流淌声
+ 3 端起杯对光轻转 → 液体挂壁的细微黏稠声
+ 4 喝一口 → 吞咽声＋轻轻呼气
+ 5 杯壁冷凝水珠滑落 → 极轻的水滴声
+卖点带出：【台词一句体感描述，或最后字卡（后期）】
+收尾：【空杯/空袋＋桌上一滴水痕，静一秒】
+台词像聊天、不像广告，例句：“不齁，咽下去有回甘”
+合规红线：不说治疗/改善/增强免疫力/通便；不出现夸张功效反应（如捂肚子）；画面不渲字`,
+
+t7: `带货对比【20-30】秒竖屏：真人对镜头做对比测评【产品名】
+产品拆件：【本方产品外观】；对比物：【泛化描述，如：市面常见果汁饮料一杯，不点名任何品牌】
+出镜人设：【性别＋年龄段＋身份＋穿搭一句话】
+前3秒钩子＝【两杯并置，一杯浑浊一杯清透，手指依次点过去＋一声轻敲玻璃】
+对比维度（3个以内）：【颜色／挂壁质地／配料表（字后期贴）／喝后口腔感受】
+中段演示：左右手各拿一杯→同时倒出→并置对比→喝本方产品→【反应动作】
+收尾：只举起本方产品看镜头＋【一句不贬低对手的结论，如：我更愿意选发酵的】
+她说话像聊天分享、不像广告，例句：“【体感描述】”
+质感二选一：【手机实拍测评感／投放级广告感】
+合规红线：不点名不贬低任何竞品、不做功效对比；画面不渲字，配料表字卡后期贴`,
+
+t8: `带货反差总长【15-30】秒竖屏：一个包袱的短视频，产品是包袱落点
+产品：【产品名】＋【袋身材质颜色／盖子／内容物】
+角色：【1人外观，表演一本正经、不夸张扮丑】
+前3秒钩子＝【强反差动作，如：她把一袋深紫色饮品倒进高脚杯，表情像在喝红酒】
+铺垫：【预期建立，如：同事以为她在喝什么高级货，凑过来问】
+包袱（第【8-12】秒）＝【预期反转，如：她淡淡说“蓝莓后生元，公司冰箱拿的”】
+产品露出方式：包袱落点处产品必须在画面里【举起来／放桌面正中】
+收尾：【产品特写一拍＋一句反转台词】
+表演纪律：镜头稳、光正常、动作克制（荒诞感来自设定，不来自浮夸表演）
+质感二选一：【手机实拍测评感／投放级广告感】
+合规红线：不拿身体状况/疾病开玩笑；不说治疗/改善类词；画面不渲字`,
+
+b1: `品牌故事片总长【60-90】秒【16:9】（拆【3】段，每段≤30秒，逐段生成后剪辑拼接，本次先写【第1段／共3段】）
+产品：百芙乐蓝莓后生元饮品
+故事线（三幕）：【第1段…／第2段…／第3段…】
+本段目标（这一段只完成一件事）：【待确认】
+上段尾帧：无（本段是第一段）
+主角：【主角外观＋体型参照物】
+开场钩子＝【本段开场3秒可见的动作】
+本段情节：【本段发生的事】
+结尾定格（本段最后一帧，留下一段要接的画面）：【待确认】
+台词（如有，日常口语，不说教）：“…”
+质感：【电影感实拍｜自然光＋浅景深】
+slogan与字卡后期贴，画面不渲字
+合规红线：不说治疗/改善/增强免疫力；画面不渲字`,
+
+b2: `品牌世界观片总长【30-60】秒【16:9】（拆【2】段，每段≤30秒，逐段生成后剪辑拼接，本次先写【第1段／共2段】）
+产品：百芙乐蓝莓后生元饮品
+世界观设定：【设定一句话，如：外星母星没有蓝色】
+本段目标（这一段只完成一件事）：【待确认】
+上段尾帧：无（本段是第一段）
+登场主体（每个主体一段外观定义，写明参照物）：【待确认】
+开场镜头（低角度＋参照物买尺度，不用“巨大/宏伟”这类词）＝【待确认】
+本段画面（按时间码切镜，每个时间码一个可见变化）：【待确认】
+结尾定格：【待确认】
+质感：【史诗实拍感｜体积光＋大气透视】
+slogan后期贴，画面不渲字
+合规红线：不说治疗/改善/增强免疫力；画面不渲字`,
+
+b3: `品牌溯源片总长【45-60】秒【16:9】（拆【2】段，每段≤30秒，逐段生成后剪辑拼接，本次先写【第1段／共2段】）
+产品：百芙乐蓝莓后生元饮品
+本段目标（这一段只完成一道工序）：【待确认】
+上段尾帧：无（本段是第一段）
+不变项（全程锁定，声明后不许变）：【同一车间／同一束顶光／同一身工服】
+讲解人：【讲解人外观；没有讲解人就写“无人出镜”】
+开场钩子＝【开场3秒可见的动作】
+工序链（一段一个工序，按空间顺序推进）：【待确认】
+结尾定格：【待确认】
+卖点怎么带出：【只留1个，不夸功效】
+质感：【纪录感实拍｜车间自然光】
+字卡后期贴，画面不渲字
+合规红线：不说治疗/改善类词；画面不渲字`,
+
+b4: `品牌沉浸带看【30】秒内单条【16:9】：第一人称一镜到底，一次不剪
+产品：百芙乐蓝莓后生元饮品
+本段目标（从哪到哪）：【待确认】
+上段尾帧：无（单条成片）
+相机载体（谁在走/飞，镜头运动全部由它推导）：【如：FPV穿越机】
+开场钩子＝【开场3秒的镜头动作】
+路线（按先后顺序，每个地点一个动作）：【待确认】
+结尾定格（本段最后一帧）：【待确认】
+穿帮红线：整条不切镜头；每个转场写明“镜头继续运动”；运动必须符合载体物理
+质感：【运动相机实拍｜轻微晃动】
+slogan后期贴，画面不渲字
+合规红线：不说治疗/改善/增强免疫力；画面不渲字`,
+
+b5: `品牌质感形象片【15-20】秒单条【9:16】：无人物出镜，产品是唯一主角
+产品：百芙乐蓝莓后生元饮品
+产品拆件：哑光自立袋，袋身偏紫罗兰、never纯蓝，白色螺旋盖，内容物深紫红、略稠带果肉感
+环境与布景：深灰石材台面＋一束侧逆光
+美学定调（开头写明，三选一）：【premium beauty-commercial／clean minimal／暗调高级感】
+前3秒钩子＝瓶身从画面上方落下、稳稳立住，瓶内液体晃出漩涡
+中段质感镜头（3-4个，一拍一种物理效果）：【光扫过瓶身／紫红液体冲入玻璃杯／杯壁冷凝水珠滑落】
+收尾：产品定格英雄帧，留干净空白区给后期字卡——画面不渲任何文字
+卖点（只贴字卡，不进画面）：【待确认】
+质感：【投放级广告感】
+合规红线：不说治疗/改善/增强免疫力；画面不渲字`,
+
+b6: `品牌人设口播总长【30-45】秒【9:16】（超过30秒拆2段逐段生成，本次先写【第1段／共1段】）
+产品：百芙乐蓝莓后生元饮品
+产品拆件：哑光自立袋，袋身偏紫罗兰、never纯蓝，白色螺旋盖，内容物深紫红、略稠带果肉感
+出镜人设：【出镜人设，如：32岁女营养师，素色针织】
+本段目标（这一段讲清哪件事）：【待确认】
+上段尾帧：无（单条成片）
+前3秒钩子＝【开场3秒可见的动作】
+讲什么：【品牌理念，不是卖点轰炸】
+台词（第一人称、像聊天分享不像宣言，例句）：“…”
+收尾：产品在画面里＋看镜头一句收束＋【引导语】
+卖点（最多带1个）：【待确认】
+质感：【手机实拍感】
+合规红线：不说治疗/改善/增强免疫力；画面不渲字`,
+
+k1: `科普原理讲解总长【180-240】秒【16:9】（拆【6-8】段，每段≤30秒，逐段生成后剪辑拼接，本次先写【第1段／共6段】）
+产品：百芙乐蓝莓后生元饮品
+主题：【整条讲什么，一句话】
+本段只讲一个知识点：【待确认】
+已讲过什么（本段不许重复）：无（本段是第一段）
+上段尾帧：无（本段是第一段）
+讲师：【讲师人设，如：32岁女营养师，素色针织】
+开场钩子＝【开场3秒可见的动作或一个反常识问句】
+本段讲法（现象→原理→结论，用类比不用术语）：【待确认】
+本段结论（一句人话，别下段说）：【待确认】
+台词（第一人称口语，例句）：“…”
+准确性红线：不承诺功效、不说“提高N倍”、不把体外实验说成人体效果
+画面不渲字，字卡后期贴`,
+
+k2: `科普过程演示总长【180-300】秒【16:9】（拆【6-10】段，一工序一段，每段≤30秒，本次先写【第1段／共8段】）
+产品：百芙乐蓝莓后生元饮品
+主题：【整条讲什么】
+本段只讲这一道工序：【待确认】
+已讲过什么（本段不许重复）：无（本段是第一段）
+上段尾帧：无（本段是第一段）
+不变项（场地/器材/光线全程锁定）：【同一车间／同一束顶光／同一身工服】
+讲师：【如有出镜写人设；没有就写“无人出镜”】
+开场钩子＝【开场3秒可见的动作】
+工序画面（按物理顺序推进，不跳步）：【待确认】
+本段结论（这道工序改变了什么）：【待确认】
+准确性红线：不跳过任何一步、不把“辅助步骤”说成“关键步骤”、不夸工艺参数
+画面不渲字，字卡后期贴`,
+
+k3: `科普辟谣总长【120-180】秒【16:9】（拆【4-6】段，一个误区一段，每段≤30秒，本次先写【第1段／共5段】）
+产品：百芙乐蓝莓后生元饮品
+本段要破的误区（原话）：【按原话说，别美化】
+已破过哪些（本段不许重复）：无（本段是第一段）
+上段尾帧：无（本段是第一段）
+讲师：【讲师人设】
+开场钩子＝【开场3秒，或直接把误区问出来】
+错误认知怎么立（先让人点头，再推翻）：【待确认】
+推翻的依据（一句人话＋一个可见证据）：【待确认】
+本段结论（给替代说法，别只否定）：【待确认】
+台词（第一人称口语，例句）：“…”
+准确性红线：不贬低任何同行/品类、不把“未证实”说成“已证实”、不制造恐慌
+画面不渲字，字卡后期贴`,
+
+k4: `科普问答总长【180-240】秒【16:9】（拆【6-8】段，一问一段，每段≤30秒，本次先写【第1段／共7段】）
+产品：百芙乐蓝莓后生元饮品
+主持人：【主持人外观与提问口吻】
+讲师：【讲师人设】
+本段问题（观众真会问的那句）：【待确认】
+已答过什么（本段不许重复）：无（本段是第一段）
+上段尾帧：无（本段是第一段）
+开场钩子＝【开场3秒，主持人先把问题问出来】
+问答节拍：问（≤8秒）→ 答（先给结论再解释）→ 追问（把观众的疑虑替他说出来）→ 收束一句
+说话语言：中文；两人不同时开口，答话的人看主持人不看镜头
+本段结论（一句人话）：【待确认】
+准确性红线：不承诺功效、不堆术语、被追问时不改口也不加码
+画面不渲字，字卡后期贴`,
+
+k5: `科普微观世界总长【120-180】秒【16:9】（拆【4-6】段，每段≤30秒，本次先写【第1段／共5段】）
+产品：百芙乐蓝莓后生元饮品
+主题：【整条讲什么】
+本段只拍一个微观过程：【待确认】
+已拍过什么（本段不许重复）：无（本段是第一段）
+上段尾帧：无（本段是第一段）
+画风（二选一，选定不许混）：写实微观特效（另一选：3D卡通拟人）
+主体定义（每个微观主体单独写外观＋尺度参照物）：【待确认】
+开场钩子＝【开场3秒可见的变化】
+本段过程（按时间码切镜，每个时间码一个可见变化）：【待确认】
+本段结论（这个过程对人意味着什么）：【待确认】
+准确性红线：不把体外实验说成人体效果、不虚构未证实机制、尺度必须给参照物
+画面不渲字，字卡后期贴`,
+
+k6: `科普数据拆解总长【90-150】秒【16:9】（拆【3-5】段，每段≤30秒，本次先写【第1段／共4段】）
+产品：百芙乐蓝莓后生元饮品
+产品拆件：哑光自立袋，袋身偏紫罗兰、never纯蓝，白色螺旋盖，内容物深紫红、略稠带果肉感
+本段拆的是（配料表／检测项／工艺参数）：【待确认】
+已拆过什么（本段不许重复）：无（本段是第一段）
+上段尾帧：无（本段是第一段）
+出镜方式：只出手与物件特写＋画外讲解，不露全脸
+开场钩子＝【开场3秒，手指已经点在那一行上】
+逐项拆解（手指一项一项指过去，每项配一句人话）：【待确认】
+字卡规则：每个数字一张字卡，标清“检出值／添加量／检测方法”，不写结论词
+本段结论（一句人话，不下功效判断）：【待确认】
+准确性红线：检出≠有效、不把含量当功效、不引用无出处数据
+画面不渲字，字卡后期贴`,
+};
+/* 每个拍法配一条可模仿的完整需求例子（以百芙乐蓝莓后生元为例）。
+   目的不是照抄，是让用户看到「这个拍法的需求该写成什么样、写哪些要素」 */
+const EX = {
+  t1: ['站桩口播', '带货口播20秒竖屏：营养师测评百芙乐蓝莓后生元饮；前3秒钩子＝拧盖「啵」一声液体涌出；卖点＝益生菌发酵花青素好吸收；收尾＝人拿产品看镜头说一句人话'],
+  t2: ['开箱', '带货开箱18秒竖屏：快递箱拆出百芙乐蓝莓后生元饮；拆箱→撕膜→拧盖→倒杯四步，每步配一个声音特写；收尾＝倒杯挂壁特写＋喝一口点头'],
+  t3: ['剧情', '带货剧情25秒竖屏：下午三点办公室犯困，同事递来一瓶百芙乐蓝莓后生元饮，主角半信半疑喝下眼睛一亮；产品只在「递」和「收尾」出现，不破戏'],
+  t4: ['Vlog', '带货Vlog 30秒竖屏：跟拍营养师一天——晨起空腹一杯→上午门诊→午后果园回访→晚上写笔记；产品自然出现在三个生活场景里，不专门讲解'],
+  t5: ['产品片', '带货产品片15秒竖屏：无人物；蓝莓从高处落进奶白液体溅起果汁浪花→瓶子从光雾中转出→收尾产品英雄帧；每个镜头只做一个物理效果'],
+  t6: ['ASMR', '带货ASMR 20秒竖屏：冰块碰杯声→拧盖「啵」→液体倒杯挂壁声→吸管搅动声；画面与声音一一配对，最后闭眼满足喝一口'],
+  t7: ['对比', '带货对比20秒竖屏：真人对镜头，左边普通果汁右边百芙乐；对比物＝泛化「普通果汁」不点名品牌；比配料表→比工艺→比喝完感受；收尾拿起右边那瓶'],
+  t8: ['反差', '带货反差18秒竖屏：同事以为她在喝高档果汁凑过来问，结果她拿出一瓶「给肠道菌群吃的」；包袱台词收尾＝「这不是饮料，是给菌吃的」'],
+  b1: ['品牌故事', '品牌故事片60秒16:9拆3段：第1段果农清晨进园；第2段营养师入镜讲坚持发酵的理由；第3段夕阳下灌装线收尾；主角＝营养师，外观用四视图参照'],
+  b2: ['世界观奇观', '品牌世界观30秒16:9：外星飞船掠过深空→俯冲进蓝莓果园，发酵罐像星云一样发光；主角＝外星人（银灰连体服、蓝灰皮肤）；slogan后期贴，画面不渲字'],
+  b3: ['溯源工艺', '品牌溯源45秒拆2段：第1段采摘→清洗→破碎；第2段密闭发酵罐→无菌灌装；一段一个工序不跳步；不变项＝全程同一条产线、同一批果'],
+  b4: ['沉浸带看', '品牌沉浸带看30秒16:9：第一人称FPV从果园上空俯冲落地→穿过果树→推开车间大门→掠过发酵罐；全程一镜到底不切镜头'],
+  b5: ['质感形象片', '品牌质感片15秒16:9：暗调打光；光扫过瓶身→倒杯时紫红液体旋涡→英雄帧定格留字卡区；卖点只贴字卡，画面不渲字'],
+  b6: ['人设口播', '品牌人设口播40秒拆2段：营养师对镜头讲「我们为什么坚持发酵21天」；理念为主不轰炸卖点；对白一句一个节拍，讲人话不讲广告词'],
+  k1: ['原理讲解', '科普原理片3-5分钟拆6-8段：营养师讲「发酵让花青素更好吸收」；递进①直接吸收率低②发酵释放更多③后生元入肠起效；红线＝不夸功效、不说「提高N倍」'],
+  k2: ['过程演示', '科普过程演示拆6段：投料→破碎→接种→发酵→检测→灌装；一段只讲一个工序，每段配一句「为什么这步不能少」'],
+  k3: ['辟谣纠错', '科普辟谣拆4段：先立「喝果汁＝吃水果」→用数据推翻→给替代说法→收尾一句人话总结；每段只破一个误区，不回头重复'],
+  k4: ['双人问答', '科普问答拆6段：主持人问「发酵到底改变了什么」，营养师答；一问一段；先把结论说出口再展开解释，答完追问一个反例'],
+  k5: ['微观世界', '科普微观世界拆4段：镜头钻进肠道，菌群把花青素拆成酚酸→代谢物进入血液；画风＝写实微观特效（也可换3D卡通拟人）；菌群造型全程一致'],
+  k6: ['数据拆解', '科普数据拆解拆3段：手指配料表逐项指过去，每项配一句人话；字卡标「检出值／添加量／检测方法」；本段结论一句人话，不下功效判断'],
+};
+
+function showEx(k){
+  const e = EX[k];
+  const bar = document.getElementById('exbar');
+  if(!e || !bar) return;
+  bar.className = 'tplbar exbar show';
+  bar.innerHTML =
+    `<span class="exlab">💡 仿写例子 · ${e[0]}</span>` +
+    `<span class="extext">${e[1]}</span>` +
+    `<span class="exclose" title="收起" onclick="hideEx()">✕</span>`;
+}
+
+function hideEx(){
+  const bar = document.getElementById('exbar');
+  if(!bar) return;
+  bar.className = 'tplbar exbar';
+  bar.innerHTML = '';
+}
+
+function fillTpl(k){
+  const t = TPL[k];
+  if(!t){ toast('模板加载失败'); return; }
+  /* 从底栏换模板 = 换了个新需求，别再沿用上一轮的带货形式 */
+  PICK_FORM = null; PENDING = null; PICKPLAN = null;
+  hidePickBar(); hideTplBar();
+  fill(t); showEx(k);
+  toast('模板已填入 · 把【】里的内容换成你的，再发送');
+}
+
+/* 品牌 / 科普按钮：填模板的同时记住形式（b1~b6 / k1~k6），
+   下一次回车就直接进第 2 轮算技能组合 —— 和带货点按钮选型后的流程一致 */
+function fillPreset(k){
+  const t = TPL[k];
+  if(!t){ toast('模板加载失败'); return; }
+  PICK_FORM = k; TPLROUTE = null; PENDING = null; PICKPLAN = null;
+  hidePickBar(); hideTplBar();
+  fill(t); showEx(k);
+  toast('模板已填入 · 把【】里的内容换成你的，再按回车');
+}
+
+/* ============================== 带货选型（「带货：」前缀） ============================== */
+let TPLROUTE = null;
+let ROUTING = false;
+
+/* ---- 第 2 轮：技能组合确认 ---- */
+let PICKPLAN = null;    // /api/pick 的完整返回，用来渲染确认条
+let PENDING  = null;    // 已确认、等下一次回车就用的技能列表
+let PICK_FORM = null;   // 记住形式，模板栏收起来后也能判断「这是带货流程」
+let PICKING  = false;   // 正在算组合
+let SKIP_PICK = false;  // 点了「以后不再问」就置 true，回到一步到底
+
+async function routeOffer(prefix, body){
+  const bar = document.getElementById('tplbar');
+  ROUTING = true;
+  bar.className = 'tplbar show';
+  bar.innerHTML = '<span class="tinfo">正在判断这段该用哪种形式……</span>';
+  try{
+    const r = await fetch('/api/offer/route', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ text: prefix + '：' + body })
+    });
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.detail || '选型失败');
+    TPLROUTE = d;
+    PICK_FORM = d.form;          // 记住形式：第 2 轮据此定主角
+    PICKPLAN = null; PENDING = null;
+    hidePickBar();
+    const el = document.getElementById('input');
+    el.value = d.template;
+    autoGrow(); el.focus();
+    renderTplBar(d);
+    toast(`已按「${d.form_name}」搭好` + (d.guessed.length ? ` · ${d.guessed.length} 处要你定` : ''));
+  }catch(e){
+    bar.className = 'tplbar';
+    bar.innerHTML = '';
+    const el = document.getElementById('input');
+    el.value = body;            // 去掉前缀还原，再按回车就按普通需求生成
+    autoGrow(); el.focus();
+    toast('选型没成功：' + e.message + '（已还原成原话，再按回车直接生成）');
+  }finally{
+    ROUTING = false;
+  }
+}
+
+function renderTplBar(d){
+  const bar = document.getElementById('tplbar');
+  const tip = d.guessed.length ? ` · 有 ${d.guessed.length} 处要你定：${d.guessed.join('、')}` : '';
+  let src = '';
+  if(d.source === 'rule')         src = ' · 模型没连上，靠关键词猜的，场景和钩子没帮你填';
+  else if(d.source === 'default') src = ' · 没看懂这句，先按这个拍法给你，可以点下面换';
+  bar.className = 'tplbar show';
+  bar.innerHTML =
+    `<span class="tinfo">已按「<b>${d.form_name}</b>」搭好${tip}${src}｜改完按回车，我先给你算用哪几个写法</span>` +
+    `<span class="chips">` +
+      d.forms.map(f =>
+        `<span class="tchip${f.key===d.form?' on':''}" data-k="${f.key}" title="${escapeHtml(f.when)}" onclick="switchTpl('${f.key}')">${f.short.replace(/^[①②③④⑤⑥⑦⑧]/,'')}</span>`
+      ).join('') +
+    `</span>`;
+}
+
+function switchTpl(k){
+  if(!TPLROUTE) return;
+  const f = (TPLROUTE.forms || []).find(x => x.key === k);
+  if(!f) return;
+  TPLROUTE.form = k;
+  PICK_FORM = k;
+  const el = document.getElementById('input');
+  el.value = f.text;
+  autoGrow(); el.focus();
+  const bar = document.getElementById('tplbar');
+  bar.querySelectorAll('.tchip').forEach(c => c.classList.toggle('on', c.dataset.k === k));
+  const info = bar.querySelector('.tinfo');
+  if(info) info.innerHTML = `已换成「<b>${f.name}</b>」，模板也换成这一套默认写法（你填过的内容保留）｜改完按回车`;
+  toast('已换成「' + f.name + '」');
+  showEx(k);   /* 换拍法 = 例子也跟着换 */
+  /* 第 2 轮已经算过组合 → 换了形式，主角必须跟着重算，别沿用上一个形式的主角 */
+  if(PICKPLAN){ PENDING = null; pickPlan(el.value, k); }
+}
+
+function hideTplBar(){
+  const bar = document.getElementById('tplbar');
+  if(!bar) return;
+  bar.className = 'tplbar';
+  bar.innerHTML = '';
+  TPLROUTE = null;
+}
+
+/* ---------- 第 2 轮：先算技能组合，停下来等确认 ---------- */
+
+async function pickPlan(text, form){
+  const bar = document.getElementById('pickbar');
+  PICKING = true;
+  bar.className = 'tplbar show';
+  bar.innerHTML = '<span class="tinfo">正在算这一段该用哪几个技能……</span>';
+  try{
+    const r = await fetch('/api/pick', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ text: text, form: form || null })
+    });
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.detail || '算组合失败');
+    if(!d.skills || !d.skills.length) throw new Error('没算出技能组合');
+    PICKPLAN = d;
+    PENDING  = d.skills.slice();
+    PICK_FORM = d.form || form || PICK_FORM;
+    renderPickBar(d);
+  }catch(e){
+    /* 算不出来就不拦路：直接按原文生成，别让用户卡在这一步 */
+    PENDING = null; PICKPLAN = null;
+    bar.className = 'tplbar'; bar.innerHTML = '';
+    toast('技能组合没算出来（' + e.message + '），这次直接生成');
+    realSend(text, document.getElementById('input'));
+  }finally{
+    PICKING = false;
+  }
+}
+
+function renderPickBar(d){
+  const bar = document.getElementById('pickbar');
+  const forms = (TPLROUTE && TPLROUTE.forms) || [];
+  /* 形式名按 d.form 取：换过 chip 之后 TPLROUTE.short 还是第 1 轮那个，会显示错 */
+  const fm = forms.find(x => x.key === d.form) || null;
+  const formName = fm ? fm.name : '当前拍法';
+  const formWhen = fm ? fm.when : '';
+
+  /* 界面上不用「主角／底座」这种词：一个说「用什么写法」，一个说「补哪些细节」 */
+  const heroZh = zhOfName(d.hero) || d.hero;
+  const bases = (d.base || []).map(n => escapeHtml(zhOfName(n) || n));
+  const baseLine = bases.length
+    ? `另补 ${bases.length} 项细节：${bases.join('、')}`
+    : '不需要额外细节';
+
+  const extras = [];
+  if(d.dropped && d.dropped.length)
+    extras.push(`模型还多给了 ${d.dropped.length} 个写法，已忽略`);
+  if(d.note){
+    const mm = String(d.note).match(/模型想用\s+(\S+?)[，,]\s*已按形式取\s+(\S+)/);
+    extras.push(mm
+      ? `模型本来想用「${escapeHtml(zhOfName(mm[1]))}」，最后按你选的拍法用了「${escapeHtml(zhOfName(mm[2]))}」`
+      : escapeHtml(d.note));
+  }
+
+  /* 换拍法：复用第 1 轮那 8 个 chip（会连模板一起换，已填的内容保留） */
+  const chips = forms.length
+    ? forms.map(f => `<span class="tchip${f.key===d.form?' on':''}" data-k="${f.key}"
+          title="${escapeHtml(f.when)}" onclick="switchTpl('${f.key}')">${f.short.replace(/^[①②③④⑤⑥⑦⑧]/,'')}</span>`).join('')
+    : '';
+
+  bar.className = 'tplbar show';
+  bar.innerHTML =
+    `<span class="tinfo">` +
+      `<span style="color:var(--dim)">打算这样拍：</span><b title="${escapeHtml(formWhen)}">${escapeHtml(formName)}</b>` +
+      `<br><span style="color:var(--dim)">写法用</span>「<b>${escapeHtml(heroZh)}</b>」<span style="color:var(--dim)">，${baseLine}</span>` +
+      (extras.length ? `<br><span style="color:var(--warn)">${extras.join('　')}</span>` : '') +
+      `<br><span style="color:#5a6474">觉得没问题就按回车，或点下面「开始写」</span>` +
+    `</span>` +
+    `<span class="chips">` +
+      (chips ? `<span style="color:var(--dim);font-size:11px">换拍法</span>${chips}` : '') +
+      `<span class="tchip on" onclick="confirmPick()">✔ 开始写</span>` +
+      `<span class="tchip" onclick="skipPickForever()" title="以后不再确认写法，回车直接生成">以后不再问</span>` +
+      `<span class="tchip" onclick="cancelPick()">取消</span>` +
+    `</span>`;
+}
+
+function confirmPick(){
+  if(!PENDING) return;
+  send();                       // 走 send() 的第 3 轮分支
+}
+
+function cancelPick(){
+  PENDING = null; PICKPLAN = null;
+  hidePickBar();
+  toast('已取消，这份模板还留在输入框里');
+}
+
+function skipPickForever(){
+  SKIP_PICK = true;
+  toast('以后不再确认技能，按回车直接生成（刷新页面恢复）');
+  confirmPick();
+}
+
+function hidePickBar(){
+  const bar = document.getElementById('pickbar');
+  if(!bar) return;
+  bar.className = 'tplbar';
+  bar.innerHTML = '';
+}
+
+function fill(t){ const el=document.getElementById('input'); el.value=t; el.focus(); autoGrow(); }
+
+
+function autoGrow(){ const el=document.getElementById('input'); el.style.height='auto'; el.style.height=Math.min(el.scrollHeight,150)+'px'; }
+function toast(msg){
+  const t = document.createElement('div');
+  t.textContent = msg;
+  t.style.cssText='position:fixed;bottom:26px;left:50%;transform:translateX(-50%);background:#232833;color:#e8eaed;padding:9px 18px;border-radius:9px;font-size:12.5px;z-index:999;border:1px solid #2a2f3a;box-shadow:0 6px 22px rgba(0,0,0,.45)';
+  document.body.appendChild(t);
+  setTimeout(()=>{t.style.transition='opacity .3s';t.style.opacity='0';setTimeout(()=>t.remove(),300)},1900);
+}
+
+document.getElementById('input').addEventListener('input', autoGrow);
+document.getElementById('input').addEventListener('keydown', e=>{
+  if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); }
+});
+
+loadSkills().then(()=>{ if(S.skills.length===0) toast('没找到技能包，检查 skills 目录'); });
+loadUpdateStatus();
+</script>
+</body>
+</html>
