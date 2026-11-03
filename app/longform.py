@@ -406,8 +406,9 @@ _ASSIGN_SYS = """你在给已分好段的长片，逐段指定「用哪种镜头
 【选择原则】
 1. 看这一段「本质上在用什么方式说服人」，不是看它出现了什么东西；
 2. 重复必须是有意的：首段与尾段可以用同一主角呼应（立世界与收束用同一镜头语言，片子才合得上）；中段同类内容可以交替复用。只禁止无意识的连用——同一主角连续 3 段以上要避免。不要为了「每段都不一样」而强行换拍法，7 段 7 种拍法不是节奏，是杂乱；
-3. 一段只能一个主角 —— 如果这段真的需要两种拍法，说明它该拆成两段；
-4. 理由必须具体到「这段要做什么，所以需要这套镜头逻辑」，禁止写「内容合适」「比较搭」这种空话。
+3. 硬上限：全片选用的主角技能不得超过 3 种 —— 内容相近的段必须共用同一主角（例如视觉奇观类、真人叙事类、产品质感类各算一种）；
+4. 一段只能一个主角 —— 如果这段真的需要两种拍法，说明它该拆成两段；
+5. 理由必须具体到「这段要做什么，所以需要这套镜头逻辑」，禁止写「内容合适」「比较搭」这种空话。
 
 【还要给每段写两个画面锚点，用来做段与段的接缝】
   - open：本段开场 0-3 秒那一帧「看得见的画面」，一句话，写动作/构图/光线，不许写旁白或情绪词；
@@ -509,6 +510,71 @@ def assign_segments(
             except Exception:
                 pass
 
+    # 主角收敛：全片主角技能种类有硬上限（3 种）。2026-11-03 实测：提示词里的
+    # 「7 段 7 种是杂乱」压不住模型，120s 真实调用仍是 7 段 7 种。双保险：
+    #   第一道：超限时让模型把拍法相近的段合并重选一次（保留语义匹配）；
+    #   第二道：仍超限就代码强制归并——按出现次数保留前 3 种，其余段就近并入。
+    MAX_HERO_KINDS = 3
+
+    def _kinds() -> list[str]:
+        seen: list[str] = []
+        for i in sorted(hero_by_i):
+            h = hero_by_i[i][0]
+            if h not in seen:
+                seen.append(h)
+        return seen
+
+    if source == "model" and len(_kinds()) > MAX_HERO_KINDS:
+        current = "\n".join(f"段{i}：{hero_by_i[i][0]}" for i in sorted(hero_by_i))
+        conv_user = (
+            f"视频类型：{KIND_LABEL.get(kind, '品牌片')}\n主题：{theme}\n\n"
+            f"你刚才给每段选的主角共有 {len(_kinds())} 种，太散了。"
+            f"全片主角技能不得超过 {MAX_HERO_KINDS} 种："
+            f"把拍法相近的段合并到同一主角（例如视觉奇观类、真人叙事类、"
+            f"产品质感类各算一种），每段仍要是它在那个大类里最合适的。"
+            f"重新输出完整 JSON（含每段 hero/why/open/close），"
+            f"覆盖全部 {len(segs)} 段。\n\n当前选择：\n{current}\n\n分段：\n"
+            f"{_listing(enumerate(segs, start=1))}\n"
+        )
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": _ASSIGN_SYS.format(pool=pool_lines)},
+                    {"role": "user", "content": conv_user},
+                ],
+                temperature=0.2,
+                timeout=45,
+            )
+            _collect(_parse_json(resp.choices[0].message.content or ""))
+        except Exception:
+            pass
+
+    merged_note = ""
+    kinds = _kinds()
+    if source == "model" and len(kinds) > MAX_HERO_KINDS:
+        from collections import Counter
+        freq = Counter(h for h, _ in hero_by_i.values())
+        first_seen = {h: idx for idx, h in enumerate(kinds)}
+        kept = sorted(freq, key=lambda h: (-freq[h], first_seen[h]))[:MAX_HERO_KINDS]
+        kept_set = set(kept)
+        last_kept = ""
+        for i in range(1, len(segs) + 1):
+            if i not in hero_by_i:
+                continue                      # 空缺段留给 _guess_hero 兜底
+            if hero_by_i[i][0] in kept_set:
+                last_kept = hero_by_i[i][0]
+            else:
+                hero_by_i[i] = (
+                    last_kept or kept[0],
+                    f"全片主角超过 {MAX_HERO_KINDS} 种，代码收敛到「{HERO_POOL[last_kept or kept[0]]['cn']}」"
+                    f"（原选 {HERO_POOL[hero_by_i[i][0]]['cn']}）",
+                )
+        merged_note = (
+            f"全片主角超过 {MAX_HERO_KINDS} 种，已收敛为："
+            + "、".join(HERO_POOL[h]["cn"] for h in kept)
+        )
+
     out = []
     prev_hero = ""
     for i, s in enumerate(segs, start=1):
@@ -538,6 +604,8 @@ def assign_segments(
         out.append(seg)
 
     warnings = _consistency_warnings(out)
+    if merged_note:
+        warnings.append(merged_note)
     return {"segs": out, "source": source, "warnings": warnings}
 
 

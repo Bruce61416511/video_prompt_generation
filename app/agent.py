@@ -94,8 +94,33 @@ SKILL_LAYERS: dict[str, str] = {
 }
 
 
-# ---------------------------------------------------------------- 调度器
+def _extract_product_name(user_input: str) -> str:
+    """从用户输入里抽产品名。
 
+    带货模板两种写法都要兜住：
+      1. 「产品：X」独立成行（t3/t4/t5/t6/t8）；
+      2. 产品名只出现在首行【】里（t1/t2/t7：「真人测评【X】」）。
+    占位符（【待确认…】）、秒数（15-30）、画幅（9:16…）都不算产品名。
+    抽不出返回空串 —— 抽不出就不做保全，绝不猜。
+    """
+    text = user_input or ""
+    m = re.search(r"^产品[:：]\s*(.+)$", text, re.M)
+    if m:
+        name = m.group(1).strip()
+        if name and "待确认" not in name and 3 <= len(name) <= 40:
+            return name
+    first = text.splitlines()[0] if text else ""
+    for g in re.findall(r"【([^】]+)】", first):
+        g = g.strip()
+        if ("待确认" in g or "9:16" in g or ":" in g
+                or re.fullmatch(r"[\d\-—~\s]+", g)):
+            continue
+        if 3 <= len(g) <= 40:
+            return g
+    return ""
+
+
+# ---------------------------------------------------------------- 调度器
 class Agent:
     def __init__(self, loader: SkillLoader, cfg: LLMConfig):
         self.loader = loader
@@ -608,6 +633,29 @@ class Agent:
             "tokens": (out or {}).get("tokens"),
         }
 
+    # ------------------------------------------------------------ 产品名保全
+
+    def _fix_product_name(self, product: str, content: str) -> str:
+        """成稿丢了产品名：一次轻量修复调用把名字加回去。
+
+        只改产品描述处、其余不动；修完仍不含产品名就放弃返回原文 ——
+        宁可缺名字也不让一次失败的修复把全文搅乱。
+        """
+        if not content:
+            return content
+        user = (
+            f"下面这条视频提示词丢掉了产品名「{product}」。"
+            f"请在产品锁定／产品首次出现的段落把「{product}」明确写进去"
+            f"（袋身印刷区不渲文字的约束保留，产品名写在画面描述里即可），"
+            f"其余内容一字不改，直接输出修改后的完整提示词，不要任何说明。\n\n{content}"
+        )
+        try:
+            out = self.generate(user_input=user, skill_names=[], temperature=0.2)
+            fixed = (out or {}).get("content") or ""
+            return fixed if product in fixed else content
+        except Exception:
+            return content
+
     # ------------------------------------------------------------ 技能顺序整理
 
     # 技能绑定（2026-11-02 恢复，做「模型忘了挂底座」的最后一道保险）。
@@ -778,6 +826,16 @@ class Agent:
         # ②③ 生成
         emit("generating", {"skills": picked})
         gen = self.generate(user_input, picked, history=history)
+
+        # 产品名保全：模板里写明的产品名不许在成稿里丢失。
+        # 2026-11-03 实测：纯产品片/反差钩子会把「产品：百芙乐蓝莓后生元」
+        # 改写成「一支哑光自立袋」这种无名描述，质检也没抓出来。
+        # 生成后先查一道，修正稿出来再查一道；丢了就做一次轻量修复调用。
+        prod = _extract_product_name(user_input)
+        if prod and prod not in gen["content"]:
+            emit("product_missing", {"product": prod})
+            gen["content"] = self._fix_product_name(prod, gen["content"])
+
         emit("generated", {"chars": len(gen["content"])})
 
         result = {
@@ -832,6 +890,9 @@ class Agent:
             except Exception as e:
                 rev = {"issues": None, "revised": None, "content": "", "error": str(e)}
             if rev.get("revised") or rev.get("issues"):
+                # 修正稿也可能把产品名改丢 —— 修正后补最后一道检查
+                if rev.get("revised") and prod and prod not in rev["revised"]:
+                    rev["revised"] = self._fix_product_name(prod, rev["revised"])
                 result["revision"] = rev
                 emit("revised", {"chars": len(rev.get("revised") or "")})
             else:
