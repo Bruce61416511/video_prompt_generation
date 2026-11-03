@@ -405,7 +405,7 @@ _ASSIGN_SYS = """你在给已分好段的长片，逐段指定「用哪种镜头
 
 【选择原则】
 1. 看这一段「本质上在用什么方式说服人」，不是看它出现了什么东西；
-2. 相邻两段尽量不要同一主角，除非内容确实同类（同一主角连用 3 段以上要避免）；
+2. 重复必须是有意的：首段与尾段可以用同一主角呼应（立世界与收束用同一镜头语言，片子才合得上）；中段同类内容可以交替复用。只禁止无意识的连用——同一主角连续 3 段以上要避免。不要为了「每段都不一样」而强行换拍法，7 段 7 种拍法不是节奏，是杂乱；
 3. 一段只能一个主角 —— 如果这段真的需要两种拍法，说明它该拆成两段；
 4. 理由必须具体到「这段要做什么，所以需要这套镜头逻辑」，禁止写「内容合适」「比较搭」这种空话。
 
@@ -419,25 +419,54 @@ _ASSIGN_SYS = """你在给已分好段的长片，逐段指定「用哪种镜头
 """
 
 
-def assign_segments(kind: str, theme: str, segs: list[dict], setting: dict, client=None, model: str = "") -> dict:
+def assign_segments(
+    kind: str, theme: str, segs: list[dict], setting: dict,
+    client=None, model: str = "", descriptions: dict | None = None,
+) -> dict:
     """步 2：模型选主角（限池内），底座按规则强制。"""
     if not segs:
         return {"segs": [], "source": "empty"}
 
-    pool_lines = "\n".join(f"- {name}｜{v['cn']}｜什么时候用：{v['use']}" for name, v in HERO_POOL.items())
-    listing = "\n".join(
-        f"段{i}（{s.get('sec', 12)} 秒，{s.get('title', '')}）：{s.get('content', '')}"
-        for i, s in enumerate(segs, start=1)
+    # 候选清单带两层信息：手写的「什么时候用」+ SKILL.md frontmatter 的 description。
+    # 后者从 loader 实时读，改技能文件就自动生效，不用维护两份。
+    descs = descriptions or {}
+    pool_lines = "\n".join(
+        f"- {name}｜{v['cn']}｜什么时候用：{v['use']}"
+        + (f"｜技能自述：{descs[name]}" if descs.get(name) else "")
+        for name, v in HERO_POOL.items()
     )
 
     hero_by_i: dict[int, tuple[str, str]] = {}
     anchor_by_i: dict[int, tuple[str, str]] = {}
     source = "fallback"
+
+    def _listing(pairs) -> str:
+        return "\n".join(
+            f"段{i}（{s.get('sec', 12)} 秒，{s.get('title', '')}）：{s.get('content', '')}"
+            for i, s in pairs
+        )
+
+    def _collect(data) -> None:
+        for s in data.get("segs") or []:
+            try:
+                i = int(s.get("i"))
+            except Exception:
+                continue
+            # 接缝锚点与「主角选得对不对」无关 —— 主角无效也必须保留，
+            # 否则这段走兜底后 open/close 变空，骨架里的接缝退化成【待填】。
+            anchor_by_i[i] = (
+                str(s.get("open") or "").strip(),
+                str(s.get("close") or "").strip(),
+            )
+            hero = str(s.get("hero") or "").strip()
+            if hero in HERO_POOL:
+                hero_by_i[i] = (hero, str(s.get("why") or "").strip())
+
     if client is not None and model:
         user = (
             f"视频类型：{KIND_LABEL.get(kind, '品牌片')}\n主题：{theme}\n"
             f"全片画风（已定，不参与选择）：{setting.get('画风') or '未指定（按主题自定）'}\n"
-            f"出镜人（已定）：{setting.get('主角', '')}\n\n分段：\n{listing}\n"
+            f"出镜人（已定）：{setting.get('主角', '')}\n\n分段：\n{_listing(enumerate(segs, start=1))}\n"
         )
         try:
             resp = client.chat.completions.create(
@@ -449,32 +478,50 @@ def assign_segments(kind: str, theme: str, segs: list[dict], setting: dict, clie
                 temperature=0.2,
                 timeout=45,
             )
-            data = _parse_json(resp.choices[0].message.content or "")
-            for s in data.get("segs") or []:
-                try:
-                    i = int(s.get("i"))
-                except Exception:
-                    continue
-                hero = str(s.get("hero") or "").strip()
-                if hero in HERO_POOL:
-                    hero_by_i[i] = (hero, str(s.get("why") or "").strip())
-                    anchor_by_i[i] = (
-                        str(s.get("open") or "").strip(),
-                        str(s.get("close") or "").strip(),
-                    )
+            _collect(_parse_json(resp.choices[0].message.content or ""))
             if hero_by_i:
                 source = "model"
         except Exception:
             pass
+
+        # 缺失重试：模型漏了某段（JSON 里少一条 i、或主角为空/池外），
+        # 只把这几段单独补问一次，而不是直接认命走关键词兜底。
+        missing = [(i, s) for i, s in enumerate(segs, start=1) if i not in hero_by_i]
+        if missing:
+            retry_user = (
+                f"视频类型：{KIND_LABEL.get(kind, '品牌片')}\n主题：{theme}\n"
+                f"全片画风（已定）：{setting.get('画风') or '未指定（按主题自定）'}\n"
+                f"出镜人（已定）：{setting.get('主角', '')}\n\n"
+                f"以下 {len(missing)} 段第一次没有选出主角，请只给这几段补选：\n"
+                f"{_listing(missing)}\n"
+            )
+            try:
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": _ASSIGN_SYS.format(pool=pool_lines)},
+                        {"role": "user", "content": retry_user},
+                    ],
+                    temperature=0.2,
+                    timeout=45,
+                )
+                _collect(_parse_json(resp.choices[0].message.content or ""))
+            except Exception:
+                pass
 
     out = []
     prev_hero = ""
     for i, s in enumerate(segs, start=1):
         if i in hero_by_i:
             hero, why = hero_by_i[i]
+            guessed = False
         else:
             hero, why = _guess_hero(s.get("content", ""), prev_hero)
-            source = "mixed" if source == "model" else "fallback"
+            guessed = True
+            # 只降一级：model → mixed。不许连降 —— 两个以上兜底段会把 mixed
+            # 再写成 fallback，前端就会误报「模型没连上」。
+            if source == "model":
+                source = "mixed"
         prev_hero = hero
 
         seg = dict(s)
@@ -482,6 +529,7 @@ def assign_segments(kind: str, theme: str, segs: list[dict], setting: dict, clie
         seg["hero_cn"] = HERO_POOL[hero]["cn"]
         seg["why"] = why or HERO_POOL[hero]["use"]
         seg["kind"] = kind
+        seg["guessed"] = guessed          # 界面据此给这段的主角标「猜」
         seg["open"], seg["close"] = anchor_by_i.get(i, ("", ""))
         seg["base"] = [b for b, _label, test in BASE_RULES if _safe(test, seg)]
         seg["base"] = list(dict.fromkeys(seg["base"]))

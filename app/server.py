@@ -256,6 +256,7 @@ def longform_assign(req: LongAssignRequest):
         res = assign_segments(
             kind, req.theme, segs, setting,
             client=(agent.client if cfg.api_key else None), model=cfg.model,
+            descriptions={n: sk.description for n, sk in loader.skills.items()},
         )
     except Exception as e:                          # noqa: BLE001
         raise HTTPException(500, f"配主角失败：{e}") from e
