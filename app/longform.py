@@ -26,24 +26,32 @@ import re
 
 # ---------------------------------------------------------------- 全片设定卡
 
+# 只保留两类默认值：画幅（平台操作项）和红线（合规护栏）。
+# 其余（产品/拆件/画风/主角/不变项）全部留空 —— 这些依赖「这条片子拍什么」，
+# 在拆段之前预填就是替用户拍板；拆段后由模型按主题+段内容提议，用户可改。
 SETTING_DEFAULTS = {
     "brand": {
-        "产品": "百芙乐蓝莓后生元饮品",
-        "拆件": "哑光自立袋，袋身偏紫罗兰、绝不纯蓝，白色螺旋盖，内容物深紫红、略稠带果肉感",
-        "画风": "电影感实拍｜自然光＋浅景深；全片同一色温，不混风格",
-        "主角": "营养师：32 岁女，素色针织，体型中等（作为尺度参照物）",
-        "不变项": "同一片果园／同一间车间／同一束顶光／同一身工服",
+        "产品": "",
+        "拆件": "",
+        "画幅": "16:9 横屏",
+        "画风": "",
+        "主角": "",
+        "不变项": "",
         "红线": "不说治疗/改善/增强免疫力/通便/降三高；画面不渲字，slogan 与字卡后期贴；不点名不贬低任何竞品",
     },
     "kepu": {
-        "产品": "百芙乐蓝莓后生元饮品",
-        "拆件": "哑光自立袋，袋身偏紫罗兰、绝不纯蓝，白色螺旋盖，内容物深紫红、略稠带果肉感",
-        "画风": "纪录片实拍为主；微观段用写实微观特效（不混 3D 卡通）",
-        "主角": "营养师：32 岁女，素色针织（讲解人）；主持人：25 岁男，浅色衬衫",
-        "不变项": "同一间实验室／同一束顶光／显微镜头同一放大倍率基准",
+        "产品": "",
+        "拆件": "",
+        "画幅": "9:16 竖屏",
+        "画风": "",
+        "主角": "",
+        "不变项": "",
         "红线": "不承诺功效、不说「提高 N 倍」、不把体外实验说成人体效果、检出≠有效、不引用无出处数据；画面不渲字",
     },
 }
+
+# 设定卡里由模型提议的字段（拆段后填充）
+PROPOSED_KEYS = ("产品", "拆件", "画风", "主角", "不变项")
 
 KIND_LABEL = {"brand": "品牌片", "kepu": "科普片"}
 
@@ -278,10 +286,11 @@ def plan_segments(kind: str, theme: str, seconds: int, setting: dict, client=Non
         f"视频类型：{KIND_LABEL.get(kind, '品牌片')}\n"
         f"主题：{theme}\n"
         f"总时长：{seconds} 秒\n"
-        f"产品：{setting.get('产品', '')}\n"
-        f"产品形态（写产品时必须用这个形态，不许写成瓶/罐/盒）：{setting.get('拆件', '')}\n"
-        f"全片画风：{setting.get('画风', '')}\n"
-        f"主角/出镜人：{setting.get('主角', '')}\n"
+        f"产品：{setting.get('产品') or '未指定'}\n"
+        f"产品形态（写产品时必须用这个形态，不许写成瓶/罐/盒）：{setting.get('拆件') or '未指定'}\n"
+        f"全片画风：{setting.get('画风') or '未指定（按主题自定，全片统一）'}\n"
+        f"画幅：{setting.get('画幅') or '16:9 横屏'}（切段时按这个比例想镜头，竖屏不能安排横向摇过三个工位这类调度）\n"
+        f"主角/出镜人：{setting.get('主角') or '未指定'}\n"
     )
     try:
         resp = client.chat.completions.create(
@@ -427,7 +436,7 @@ def assign_segments(kind: str, theme: str, segs: list[dict], setting: dict, clie
     if client is not None and model:
         user = (
             f"视频类型：{KIND_LABEL.get(kind, '品牌片')}\n主题：{theme}\n"
-            f"全片画风（已定，不参与选择）：{setting.get('画风', '')}\n"
+            f"全片画风（已定，不参与选择）：{setting.get('画风') or '未指定（按主题自定）'}\n"
             f"出镜人（已定）：{setting.get('主角', '')}\n\n分段：\n{listing}\n"
         )
         try:
@@ -529,6 +538,46 @@ def _consistency_warnings(segs: list[dict]) -> list[str]:
     return out
 
 
+# ------------------------------------------------- 步 2.5：提议全片设定（拆段之后）
+
+_PROPOSE_SYS = """你在给一条视频提议「全片设定」——不是拍板，是给起草稿，用户会改。
+根据主题和分段内容填写这五个字段：
+- 产品：这条片子里的产品/主体是什么。主题里没出现具体品牌或产品就写「按主题推断不出，请用户填」。
+- 拆件：产品的外观拆解，写到能照着复原（材质、颜色、开关方式、内容物）。推断不出就留空字符串。
+- 画风：一句话定全片的视觉风格。必须全片统一，不许写「前段 X 后段 Y」。
+- 主角：出镜人物的年龄/性别/穿着/体态。段里没有真人就留空字符串。
+- 不变项：全片复用的场景与光线锚点（同一场景/同一光源/同一机位基准），3-4 个，用「／」分隔。
+只输出 JSON：{"产品": "...", "拆件": "...", "画风": "...", "主角": "...", "不变项": "..."}
+推断不出就留空字符串，不要编造具体品牌。"""
+
+
+def propose_setting(kind: str, theme: str, segs: list[dict], client=None, model: str = "") -> dict:
+    """拆段之后，让模型按主题+段内容提议全片设定（画幅/红线不在提议范围，由代码定）。"""
+    out = {k: "" for k in PROPOSED_KEYS}
+    if client is None or not model:
+        return out
+    listing = "\n".join(
+        f"段{s.get('i', i + 1)}｜{s.get('title', '')}｜{s.get('content', '')}" for i, s in enumerate(segs)
+    )
+    try:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": _PROPOSE_SYS},
+                {"role": "user", "content": f"视频类型：{KIND_LABEL.get(kind, '品牌片')}\n主题：{theme}\n分段：\n{listing}"},
+            ],
+            temperature=0.4,
+        )
+        data = _parse_json(resp.choices[0].message.content or "")
+        for k in PROPOSED_KEYS:
+            v = str(data.get(k) or "").strip()
+            if v and "推断不出" not in v and "请用户填" not in v:
+                out[k] = v
+    except Exception:                               # noqa: BLE001
+        pass
+    return out
+
+
 # ---------------------------------------------------------------- 步 3：渲染本段提示词
 
 def render_segment(kind: str, seg: dict, all_segs: list[dict], setting: dict) -> str:
@@ -561,22 +610,28 @@ def render_segment(kind: str, seg: dict, all_segs: list[dict], setting: dict) ->
         f"本段镜头逻辑：{seg.get('hero_cn', '')}",
         "",
         "—— 全片设定（每段一致，不要改）——",
-        f"产品：{setting.get('产品', '')}",
+        f"产品：{setting.get('产品') or '未指定（按主题自定）—— 全片同一产品，不许中途换'}",
     ]
     if prod_on:
-        lines.append(f"产品拆件：{setting.get('拆件', '')}")
+        lines.append(f"产品拆件：{setting.get('拆件') or '【待填——写到能照着复原外观】'}")
         lines.append("产品是否出镜：本段出镜 —— 按上面拆件复原外观，不许改版、不许渲包装文字")
     else:
         lines.append("产品是否出镜：本段不出镜 —— 只登记外观备查，画面里不得出现瓶／袋／包装／饮品，也不要给它安排位置")
-    lines.append(f"画风：{setting.get('画风', '')}")
+    # 画幅：豆包界面上点选的那个才是真生效的，提示词里这行负责两件事 ——
+    # ① 让模型按这个比例做镜头调度（竖屏不能写横向摇过三个工位）；
+    # ② 提醒你自己复制到豆包时点对比例，点错整条片构图会被裁。
+    _frame = setting.get("画幅") or (SETTING_DEFAULTS.get(kind) or SETTING_DEFAULTS["brand"])["画幅"]
+    lines.append(f"画幅：{_frame} —— 生成时必须在豆包选中同一比例，否则构图会被裁")
+    _style = setting.get("画风") or "未指定（按主题自定）—— 全片必须统一成同一种画风，不要中途混用"
+    lines.append(f"画风：{_style}")
     if person_on:
-        lines.append(f"出镜人：{setting.get('主角', '')}")
+        lines.append(f"出镜人：{setting.get('主角') or '未指定 —— 按段内容自定，全片同一人必须同一张脸、同一身衣着'}")
     else:
         lines.append("出镜人：本段无真人出镜 —— 上面设定的人不入画，只拍装置／产品／空镜，也不要临时加别的人或人手")
 
     # 全片级字段：只在判定需要时出（不变项不是每段都有）
     if "不变项" in (seg.get("blocks") or []):
-        lines.append(f"不变项（全程锁定）：{setting.get('不变项', '')}")
+        lines.append(f"不变项（全程锁定）：{setting.get('不变项') or '未指定 —— 自定后全片不得中途更换'}")
     lines.append(f"合规红线：{setting.get('红线', '')}")
     if "不渲" not in (setting.get("红线") or ""):
         lines.append("画面不渲任何文字，slogan 与字卡后期贴")

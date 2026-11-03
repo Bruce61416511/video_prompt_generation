@@ -42,6 +42,7 @@ from .longform import (
     SETTING_DEFAULTS,
     assign_segments,
     plan_segments,
+    propose_setting,
     render_segment,
 )
 from .offer_forms import MAX_BASE, SKILL_MAP
@@ -216,6 +217,31 @@ def longform_plan(req: LongPlanRequest):
     except Exception as e:                          # noqa: BLE001
         raise HTTPException(500, f"拆段失败：{e}") from e
     return {"kind": kind, "label": KIND_LABEL.get(kind, ""), "setting": setting, **res}
+
+
+class LongProposeRequest(BaseModel):
+    kind: str = "brand"
+    theme: str = ""
+    segments: list[dict]          # 拆好的段表（title/content）
+
+
+@app.post("/api/longform/propose")
+def longform_propose(req: LongProposeRequest):
+    """步 1.5：拆段之后，模型按主题+段内容提议全片设定（画幅/红线不在提议范围）。"""
+    kind = req.kind if req.kind in SETTING_DEFAULTS else "brand"
+    segs = [s for s in (req.segments or []) if str(s.get("content") or "").strip()]
+    if not segs:
+        raise HTTPException(400, "段表是空的，先拆段")
+    try:
+        proposed = propose_setting(
+            kind, (req.theme or "").strip(), segs,
+            client=(agent.client if cfg.api_key else None), model=cfg.model,
+        )
+    except Exception as e:                          # noqa: BLE001
+        raise HTTPException(500, f"提议设定失败：{e}") from e
+    base = dict(SETTING_DEFAULTS.get(kind, SETTING_DEFAULTS["brand"]))
+    base.update({k: v for k, v in proposed.items() if v})
+    return {"setting": base}
 
 
 @app.post("/api/longform/assign")
