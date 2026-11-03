@@ -94,6 +94,54 @@ SKILL_LAYERS: dict[str, str] = {
 }
 
 
+# ---------------------------------------------------------------- 时间戳格式（脚本判定）
+#
+# 2026-11-03：lint 技能里加了 S12（[mm:ss-mm:ss] 必须两位补零），但真模型实测
+# 把 `[00:09-0:18]` 判成「S12 通过、格式规范、全部两位补零」—— 正则类检查
+# 交给模型不可靠。改成代码先扫一遍：能机械修的直接修（不花钱、不会改错），
+# 修完再把结果告诉模型，避免它继续判「通过」。
+
+_TIME_RANGE = re.compile(
+    r"([\[【])\s*(\d{1,3})\s*[:：]\s*(\d{1,2})\s*([-–—~～至])\s*(\d{1,3})\s*[:：]\s*(\d{1,2})\s*([\]】])"
+)
+
+
+def _scan_timecodes(text: str) -> list[dict]:
+    """扫出所有时间区间写法的毛病。[00:09-0:18] → 给出 [00:09-00:18]。"""
+    out: list[dict] = []
+    for m in _TIME_RANGE.finditer(text or ""):
+        raw = m.group(0)
+        lb, m1, s1, sep, m2, s2, rb = m.groups()
+        mm1, ss1, mm2, ss2 = int(m1), int(s1), int(m2), int(s2)
+        # 秒/分超过 59 的当普通文字，不判（避免把 00:90 这种笔误误修成别的东西）
+        if max(ss1, ss2, mm1, mm2) > 59:
+            continue
+        fixed = f"[{mm1:02d}:{ss1:02d}-{mm2:02d}:{ss2:02d}]"
+        reasons = []
+        if len(m1) < 2 or len(s1) < 2 or len(m2) < 2 or len(s2) < 2:
+            reasons.append("分/秒未两位补零")
+        if "：" in raw:
+            reasons.append("用了全角冒号")
+        if sep != "-":
+            reasons.append(f"连接符用了「{sep}」")
+        if lb != "[" or rb != "]":
+            reasons.append("用了全角方括号")
+        if reasons:
+            out.append({"raw": raw, "fixed": fixed, "reason": "、".join(reasons)})
+    return out
+
+
+def _fix_timecodes(text: str) -> tuple[str, list[dict]]:
+    """机械修时间戳格式。只动标点与补零，绝不动秒数数值。"""
+    issues = _scan_timecodes(text)
+    if not issues:
+        return text, []
+    out = text
+    for it in issues:
+        out = out.replace(it["raw"], it["fixed"], 1)
+    return out, issues
+
+
 def _extract_product_name(user_input: str) -> str:
     """从用户输入里抽产品名。
 
@@ -118,6 +166,156 @@ def _extract_product_name(user_input: str) -> str:
         if 3 <= len(g) <= 40:
             return g
     return ""
+
+
+# ---------------------------------------------------------------- 真人真实感规则
+# 2026-11-03：模型写「人物锁定」时只会堆长相形容词（日系／自然裸妆／真实毛孔），
+# 而视频里的真实感来自「光位 + 介质缺陷 + 生活痕迹」，不来自长相描写。
+# 这里只在生成阶段注入规则 + 生成后按分档做一次硬伤修复，
+# 技能结构（SKILL.md）保持原样不动 —— 用户要求技能固定。
+#
+# 四档判定（顺序不能乱：先排除项，再非人类，再只出手，最后才当真人）：
+#   none     无真人出镜（纯产品／空镜）→ 全部跳过
+#   nonhuman 外星人／生物／机器人／动画 → 只查光位与介质，不查素人长相
+#   hands    只露手（开箱／ASMR）      → 查手部真实感，不查脸／发型／妆
+#   human    真人出镜                  → 全套
+
+_SUBJECT_NONE_MARKS = ("无人物出镜", "无真人出镜", "本段无真人", "不出现人物", "纯空镜")
+_NONHUMAN_WORDS = ("外星", "生物", "机器人", "机械", "动画", "卡通", "拟人", "玩偶",
+                   "动物", "猫", "狗", "昆虫", "细菌", "菌群", "细胞", "病毒")
+_HANDS_MARKS = ("只露手", "不露全脸", "手部特写", "只出手", "手部出镜", "只拍双手")
+
+# 强档（带货／UGC）：连「电影感」都不要，要手机随手拍
+_FORBID_STRONG = ("日系", "网红", "裸妆", "精致", "完美", "无瑕", "精修", "瓷肌",
+                  "4K", "8K", "超清", "Photorealistic", "电影感")
+# 标准档（品牌／科普）：允许专业机位与电影感，但空话参数和完美词必须禁
+_FORBID_STANDARD = ("完美", "无瑕", "精修", "瓷肌", "4K", "8K", "超清", "Photorealistic")
+_NEGATION_WORDS = ("不磨皮", "不美颜", "无美颜", "不修图", "无滤镜")
+_LIGHT_WORDS = ("光从", "侧光", "窗光", "逆光", "顺光", "顶光", "自然光", "环境光",
+                "阴影", "暗部", "投影", "明暗")
+_MEDIA_WORDS = ("手持", "晃动", "对焦漂移", "噪点", "手机", "呼吸", "构图", "焦外")
+_HAND_WORDS = ("五指", "手指", "关节", "指甲", "手部")
+_NEGATORS = ("不要", "不用", "无", "非", "禁", "别", "取消", "去掉", "不")
+
+
+def _hits(text: str, words) -> list[str]:
+    """命中的词；被否定词修饰的不算（「不要电影感」合规，「电影感」不合规）。
+
+    词本身以「不／无／别」开头的（不磨皮、无瑕）不做豁免检查 ——
+    否则「不磨皮不美颜」里的第二个词会被前一个「不」误判成合规。
+    """
+    low = (text or "").lower()
+    out: list[str] = []
+    for w in words:
+        wl = w.lower()
+        needs_neg_check = not w.startswith(("不", "无", "别"))
+        pos = 0
+        while True:
+            i = low.find(wl, pos)
+            if i < 0:
+                break
+            prev = low[max(0, i - 3):i]
+            if not needs_neg_check or not any(n in prev for n in _NEGATORS):
+                out.append(w)
+                break
+            pos = i + len(wl)
+    return out
+
+
+def _detect_subject(user_input: str) -> str:
+    """判定这段提示词里的「人」属于哪一档。只看渲染文本里的出镜声明，不靠猜。"""
+    t = user_input or ""
+    if any(m in t for m in _SUBJECT_NONE_MARKS):
+        return "none"
+    # 只出手：带货的开箱／ASMR 模板会明说；有「出镜人设」的真人段不算
+    if any(m in t for m in _HANDS_MARKS) and "出镜人设" not in t:
+        return "hands"
+    # 出镜人这一行的值才决定是不是非人类 —— 整段里出现「菌群」不算，
+    # 科普片营养师讲发酵的段落常常两样都有。
+    # 措辞不统一：长片/文案用「出镜人：」，带货 t1/t7 用「出镜人设：」，
+    # t4 用「主角人设：」——三种都得认，否则 Vlog 会被误判成只出手。
+    m = re.search(r"(?:出镜人(?:设)?|主角人设|主角)[:：]\s*(.+)$", t, re.M)
+    who = (m.group(1).strip() if m else "")
+    if who:
+        return "nonhuman" if any(w in who for w in _NONHUMAN_WORDS) else "human"
+    if any(w in t for w in _NONHUMAN_WORDS) and not re.search(r"(女生|男生|营养师|女主|博主|主持人|同事|妈妈|她|他)", t):
+        return "nonhuman"
+    if re.search(r"(女生|男生|营养师|女主|博主|主持人|同事|妈妈|她|他)", t):
+        return "human"
+    if re.search(r"(手|指)", t):
+        return "hands"
+    return "none"
+
+
+def _realism_tier(user_input: str) -> str:
+    """带货要「手机随手拍」，品牌／科普要「专业但人不假」——两套口径不能混用。"""
+    return "strong" if "带货" in (user_input or "")[:60] else "standard"
+
+
+def _check_realism(text: str, subject: str, tier: str) -> dict:
+    """硬伤（必须修）与软伤（只提示）分开报。
+
+    硬伤：禁用审美词、否定式描述 —— 模型从案例库里抄来的，直接让画面变假。
+    软伤：缺光位、缺介质、缺手部描述 —— 生成阶段已注入规则，改反而容易改坏。
+    """
+    hard: list[str] = []
+    soft: list[str] = []
+    if subject == "none":
+        return {"hard": hard, "soft": soft}
+
+    if subject in ("human", "hands"):
+        forbid = _FORBID_STRONG if tier == "strong" else _FORBID_STANDARD
+        hard += [f"禁用审美词「{w}」" for w in _hits(text, forbid)]
+        hard += [f"否定式描述「{w}」（改成正向可见细节）" for w in _hits(text, _NEGATION_WORDS)]
+
+    if not _hits(text, _LIGHT_WORDS):
+        soft.append("缺光位描述（光从哪来、哪半边在暗部）")
+    if tier == "strong" and not _hits(text, _MEDIA_WORDS):
+        soft.append("缺镜头介质描述（手持／晃动／对焦漂移／噪点）")
+    if subject == "hands" and not _hits(text, _HAND_WORDS):
+        soft.append("缺手部真实感描述（五指／关节／指甲）")
+    return {"hard": hard, "soft": soft}
+
+
+def _realism_rules(subject: str, tier: str) -> str:
+    """按档位生成注入 system 的规则块。带货与品牌／科普要说的话不一样。"""
+    head = "\n\n【人物真实感规则（优先级高于本文件所有结构与案例原文）】\n"
+    if subject == "nonhuman":
+        return head + (
+            "本段主体不是人类（外星／生物／机械／动画角色），不要给它套人类皮肤与妆容描写。"
+            "但镜头仍然必须真实：写明光从哪来、哪边落在暗部；写明介质（手持晃动／"
+            "偶发对焦漂移／暗部噪点）。画面出现手部时补 realistic hands（五指、关节、指甲）。"
+        )
+    if subject == "hands":
+        return head + (
+            "本段只出手部，没有脸，禁止写长相、妆、肤色、发型。\n"
+            "手部锁定要写具体：五指数量正确、关节自然、指甲短而干净、手背有细纹与真实肤色不均；"
+            "手部与产品接触处的受力、按压、遮挡关系写清楚。\n"
+            "光位必须写（光从哪来、手在哪一侧受光、投影落在哪）；"
+            + ("介质必须写（手机主摄手持、轻微晃动、偶发对焦漂移、暗部噪点）。\n" if tier == "strong" else "\n")
+            + "禁止：日系／网红／精致／完美／无瑕／精修／4K／8K／超清／Photorealistic；"
+            "禁止否定式（不磨皮／不美颜），要写就写可见的正向细节。"
+        )
+    if tier == "strong":
+        return head + (
+            "带货类要的是「手机随手拍」，不是广告片。人物锁定只写四组，不许堆审美形容词：\n"
+            "① 身份锚：普通人长相，不写「日系／网红／美女」；写明脸型是否对称、眼型、鼻梁高低。\n"
+            "② 发型与服装：同色同款，另加使用痕迹（褶皱、洗白、磨边、被雨洇深的印子）。\n"
+            "③ 真实感锚点：光从哪来（窗光／顶灯／阴天天光）、哪半边脸在暗部、鼻翼与下颌的投影；"
+            "皮肤写可见毛孔、鼻翼泛红、额头油光、眼下细纹之类能看见的东西。\n"
+            "④ 镜头介质：手机主摄手持、轻微手抖、偶发对焦漂移、曝光小幅呼吸、构图略偏、暗部有数码噪点。\n"
+            "禁用：日系／网红／裸妆／精致／完美／无瑕／精修／瓷肌／4K／8K／超清／Photorealistic；"
+            "「电影感」只能出现在否定句（不要电影感）。\n"
+            "禁用否定式：不磨皮／不美颜／无滤镜 —— 一律改写成正向可见描述。\n"
+            "动作不要「看着镜头微笑」，写成正在做事、没注意到镜头。"
+        )
+    return head + (
+        "本段是品牌／科普片的真人段落：允许专业机位、浅景深、电影感，但人不能假。\n"
+        "必须写：① 光位（光从哪来、哪半边在暗部、鼻翼与下颌的投影）；"
+        "② 皮肤质感（可见毛孔、细微色差、油光或细纹，择二写具体）。\n"
+        "禁用空话与完美词：4K／8K／超清／Photorealistic／完美／无瑕／精修／瓷肌；"
+        "禁用否定式（不磨皮／不美颜），改写成正向可见细节。"
+    )
 
 
 # ---------------------------------------------------------------- 调度器
@@ -372,6 +570,15 @@ class Agent:
             "仅模型名、专有名词和无法翻译的参数可保留英文。所有说明性文字也用中文。"
         )
 
+        # 人物真实感规则：只在「写提示词」时注入，质检调用不注入
+        # （质检是拿规则去判别人，别再让规则反过来影响它的判词）。
+        # 触发条件是「这段里有没有真人／手部」，与片型无关 ——
+        # 带货、品牌、科普只要出现真人就都走这一套。
+        if not any("lint" in n.lower() for n in skill_names):
+            subject = _detect_subject(user_input)
+            if subject != "none":
+                system += _realism_rules(subject, _realism_tier(user_input))
+
         messages = [{"role": "system", "content": system}]
         if history:
             messages.extend(history[-8:])  # 只带最近几轮，防超长
@@ -557,11 +764,32 @@ class Agent:
         if not skill_name or skill_name not in self.loader.skills:
             return {"content": "（未找到质检类 skill，跳过质检）", "skills_used": []}
 
-        return self.generate(
-            user_input=f"请质检下面这段视频提示词：\n\n{prompt_text}",
+        # 脚本预检：模型对正则类检查不可靠（会把 [00:09-0:18] 判成「通过」），
+        # 所以先把代码扫出来的结论摆进 user，报告末尾再原样附一份，双保险。
+        tc_issues = _scan_timecodes(prompt_text or "")
+        tc_block = ""
+        if tc_issues:
+            tc_block = (
+                "【脚本预检：以下时间戳格式问题已由代码确认，必须写进「❌ 必改」，"
+                "不许判为通过，也不许说「格式规范」】\n"
+                + "\n".join(f"- {x['raw']} → 应为 {x['fixed']}（{x['reason']}）" for x in tc_issues)
+                + "\n\n"
+            )
+
+        r = self.generate(
+            user_input=tc_block + f"请质检下面这段视频提示词：\n\n{prompt_text}",
             skill_names=[skill_name],
             temperature=temperature,
         )
+
+        # 报告末尾再附一份代码判定 —— 模型万一还是漏了，用户翻到底也能看到。
+        if tc_issues:
+            r["content"] = (r.get("content") or "") + (
+                "\n\n---\n\n### ❌ 脚本判定（代码算出，不依赖模型）\n"
+                + "\n".join(f"- {x['raw']} → 应为 {x['fixed']}（{x['reason']}）" for x in tc_issues)
+            )
+            r["timecode_issues"] = tc_issues
+        return r
 
     # ------------------------------------------------------------ ⑤ 质检后修正
 
@@ -653,6 +881,37 @@ class Agent:
             out = self.generate(user_input=user, skill_names=[], temperature=0.2)
             fixed = (out or {}).get("content") or ""
             return fixed if product in fixed else content
+        except Exception:
+            return content
+
+    def _fix_realism(self, content: str, issues: list[str], subject: str, tier: str) -> str:
+        """硬伤修复：只改人物／手部锁定段与其光线、介质描述，其余一字不动。
+
+        失败策略和产品名修复一致 —— 改坏了（明显缩水、硬伤没减少）就回滚原文。
+        宁可留一点小瑕疵，也不让一次失败的修复把整条稿子搅乱。
+        """
+        if not content or not issues:
+            return content
+        user = (
+            "下面这条视频提示词里的人物描写有不真实的地方：\n- "
+            + "\n- ".join(issues)
+            + "\n\n请只改「人物／手部锁定段」以及它的光线、介质描述，把上面每条问题逐条改掉：\n"
+            "· 禁用词删掉，换成正向可见的具体细节（可见毛孔、鼻翼泛红、额头油光、额角碎发、衣服褶皱等）；\n"
+            "· 否定式（不磨皮／不美颜）改写成正向描述；\n"
+            "· 缺光位就补「光从哪来、哪半边在暗部、投影落在哪」；\n"
+            "· 缺介质就补「手机主摄手持、轻微晃动、偶发对焦漂移、暗部噪点」（仅带货类）；\n"
+            "· 若主体不是人类，不要套人类皮肤与妆容描写。\n"
+            "其余段落、时间轴、台词、产品锁定、合规约束一律原样保留，一个字都不要改。"
+            "直接输出修改后的完整提示词，不要任何说明。\n\n"
+            f"{_realism_rules(subject, tier)}\n\n{content}"
+        )
+        try:
+            out = self.generate(user_input=user, skill_names=[], temperature=0.2)
+            fixed = (out or {}).get("content") or ""
+            if not fixed or len(fixed) < len(content) * 0.6:
+                return content                                   # 明显缩水 → 判定改坏
+            still = _check_realism(fixed, subject, tier)["hard"]
+            return fixed if len(still) < len(issues) else content
         except Exception:
             return content
 
@@ -827,6 +1086,17 @@ class Agent:
         emit("generating", {"skills": picked})
         gen = self.generate(user_input, picked, history=history)
 
+        # 时间戳格式：纯机械问题，代码直接改 —— 比让模型改稳，也不花钱。
+        # 2026-11-03 实测：lint 技能加了 S12 后，模型仍把 [00:09-0:18] 判成
+        # 「格式规范、全部两位补零」，所以不能指望它。这里只补零、统一连接符，
+        # 不动秒数数值；数值本身错（段间断档、跨度不符）仍交给质检。
+        gen["content"], tc_fixed = _fix_timecodes(gen["content"])
+        if tc_fixed:
+            emit("timecode_fixed", {
+                "count": len(tc_fixed),
+                "items": [f"{x['raw']} → {x['fixed']}" for x in tc_fixed],
+            })
+
         # 产品名保全：模板里写明的产品名不许在成稿里丢失。
         # 2026-11-03 实测：纯产品片/反差钩子会把「产品：百芙乐蓝莓后生元」
         # 改写成「一支哑光自立袋」这种无名描述，质检也没抓出来。
@@ -836,12 +1106,33 @@ class Agent:
             emit("product_missing", {"product": prod})
             gen["content"] = self._fix_product_name(prod, gen["content"])
 
+        # 真实感兜底（2026-11-03）：模型爱从案例库抄「日系／裸妆／4K／不磨皮」，
+        # 这些是硬伤 —— 让人物一眼假，修一次；缺光位／缺介质只提示不修，
+        # 因为生成阶段已注入规则，硬改反而容易把好句子改坏。
+        subject = _detect_subject(user_input)
+        tier = _realism_tier(user_input)
+        realism = _check_realism(gen["content"], subject, tier)
+        if realism["hard"]:
+            emit("realism_fix", {"issues": realism["hard"], "subject": subject})
+            gen["content"] = self._fix_realism(gen["content"], realism["hard"], subject, tier)
+            recheck = _check_realism(gen["content"], subject, tier)
+            realism = {
+                "hard": recheck["hard"],
+                "soft": recheck["soft"],
+                "fixed": not recheck["hard"],
+            }
+        realism.setdefault("fixed", False)
+        realism["subject"] = subject
+        realism["tier"] = tier
+
         emit("generated", {"chars": len(gen["content"])})
 
         result = {
             "skills_used": picked,
             "generate": gen,
             "lint": None,
+            "realism": realism,
+            "timecode_fixed": tc_fixed,
         }
 
         # ④ 质检：固定环节（2026-10-16 22:50 按用户决定恢复）
