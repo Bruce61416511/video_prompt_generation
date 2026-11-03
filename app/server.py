@@ -494,6 +494,33 @@ def set_config(req: ConfigRequest):
     return {"ok": True}
 
 
+# ---------------------------------------------------------------- 成稿落盘
+# 所有生成结果（带货/普通/长片逐段，都走 /api/chat 或 /api/stream）自动保存一份到 output/
+OUTPUT_DIR = BASE_DIR / "output"
+
+
+def _save_output(user_input: str, result: dict) -> str | None:
+    """把最终成稿存到 output/，返回文件路径；失败静默（不影响主流程）。"""
+    try:
+        rev = result.get("revision") or {}
+        final = (rev.get("revised") or result.get("content") or "").strip()
+        if not final:
+            return None
+        OUTPUT_DIR.mkdir(exist_ok=True)
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        slug = re.sub(r'[\\/:*?"<>|\r\n]+', "_", user_input.strip())[:24].strip("_") or "gen"
+        path = OUTPUT_DIR / f"{ts}_{slug}.md"
+        header = (
+            f"> 输入：{user_input.strip()}\n"
+            f"> 技能：{', '.join(result.get('skills') or []) or '-'}\n"
+            f"> 时间：{time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+        )
+        path.write_text(header + final, encoding="utf-8")
+        return str(path)
+    except Exception:
+        return None
+
+
 @app.post("/api/chat")
 def chat(req: ChatRequest):
     if not cfg.api_key:
@@ -509,6 +536,7 @@ def chat(req: ChatRequest):
         on_step=lambda s, p: steps.append({"stage": s, **p}),
     )
     result["steps"] = steps
+    result["saved_to"] = _save_output(req.message, result)
     return result
 
 
@@ -537,6 +565,7 @@ def stream(req: ChatRequest):
             )
             for item in queue:
                 yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+            result["saved_to"] = _save_output(req.message, result)
             yield f"data: {json.dumps({'stage': 'done', 'result': result}, ensure_ascii=False)}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'stage': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
