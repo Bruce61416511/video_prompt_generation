@@ -30,7 +30,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -519,6 +519,78 @@ def _save_output(user_input: str, result: dict) -> str | None:
         return str(path)
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------- 提示词库
+# output/ 下自动保存的成稿提示词：列表 / 查看 / 下载 / 删除。
+# 文件名一律做 basename 校验（禁分隔符与 ..），只允许 output 一层下的 .md，防路径穿越。
+
+class LibDeleteReq(BaseModel):
+    name: str
+
+
+def _lib_path(name: str) -> Path:
+    name = (name or "").strip()
+    if not name or "/" in name or "\\" in name or ".." in name:
+        raise HTTPException(400, "非法文件名。")
+    if not name.lower().endswith(".md"):
+        raise HTTPException(400, "只允许 .md 文件。")
+    p = (OUTPUT_DIR / name).resolve()
+    try:
+        p.relative_to(OUTPUT_DIR.resolve())
+    except ValueError:
+        raise HTTPException(400, "非法路径。")
+    return p
+
+
+@app.get("/api/library")
+def library_list():
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    items = []
+    for p in sorted(OUTPUT_DIR.glob("*.md"),
+                    key=lambda x: x.stat().st_mtime, reverse=True):
+        st = p.stat()
+        head = ""
+        try:
+            head = p.read_text(encoding="utf-8", errors="replace")[:800]
+        except Exception:
+            pass
+        m_in = re.search(r"^>\s*输入：(.*)$", head, re.M)
+        m_sk = re.search(r"^>\s*技能：(.*)$", head, re.M)
+        items.append({
+            "name": p.name,
+            "size": st.st_size,
+            "mtime": int(st.st_mtime),
+            "input": (m_in.group(1).strip() if m_in else ""),
+            "skills": (m_sk.group(1).strip() if m_sk else ""),
+        })
+    return {"items": items, "total": len(items)}
+
+
+@app.get("/api/library/file")
+def library_file(name: str):
+    p = _lib_path(name)
+    if not p.exists():
+        raise HTTPException(404, "文件不存在。")
+    return {"name": p.name,
+            "content": p.read_text(encoding="utf-8", errors="replace")}
+
+
+@app.get("/api/library/download")
+def library_download(name: str):
+    p = _lib_path(name)
+    if not p.exists():
+        raise HTTPException(404, "文件不存在。")
+    return FileResponse(p, filename=p.name, media_type="text/markdown")
+
+
+@app.post("/api/library/delete")
+def library_delete(req: LibDeleteReq):
+    p = _lib_path(req.name)
+    if not p.exists():
+        raise HTTPException(404, "文件不存在。")
+    p.unlink()
+    return {"ok": True}
 
 
 @app.post("/api/chat")

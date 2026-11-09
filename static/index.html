@@ -329,6 +329,15 @@
   .tab .n{font-size:10.5px; opacity:.55; margin-left:4px}
 
   /* ---------- 案例库 ---------- */
+  /* ---------- 提示词库 ---------- */
+  .lib-item{display:flex;align-items:center;gap:14px;padding:11px 14px;border:1px solid var(--line,#262d3a);
+            border-radius:10px;margin:0 0 8px;background:var(--panel,#161b24)}
+  .lib-item:hover{border-color:#3b4a5f}
+  .lib-name{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lib-meta{font-size:11px;color:var(--dim);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lib-actions{margin-left:auto;display:flex;gap:6px;flex-shrink:0}
+  .lib-actions .btn{padding:4px 10px;font-size:12px}
+  .lib-empty{font-size:12.5px;color:var(--dim);text-align:center;padding:40px 0}
   .case-tools{display:flex; gap:9px; align-items:center; padding:11px 20px; border-bottom:1px solid var(--line); flex-shrink:0; flex-wrap:wrap}
   .case-search{
     flex:1; min-width:200px; background:var(--panel2); border:1px solid var(--line); border-radius:9px;
@@ -446,6 +455,7 @@
     <div class="tabs">
       <div class="tab active" id="tabChat" onclick="switchView('chat')">💬 生成分镜提示词</div>
       <div class="tab" id="tabCases" onclick="switchView('cases')">🎬 案例库<span class="n" id="tabCaseCount"></span></div>
+      <div class="tab" id="tabLib" onclick="switchView('lib')">📚 提示词库<span class="n" id="tabLibCount"></span></div>
     </div>
 
     <span id="chatTools" style="flex:1;display:flex;align-items:center;gap:12px;min-width:0">
@@ -460,6 +470,10 @@
 
     <span id="caseTools" style="display:none;flex:1;font-size:11.5px;color:var(--dim);text-align:right">
       <span class="dot"></span>数据源 data/cases.json · 点封面看完整 prompt
+    </span>
+
+    <span id="libTools" style="display:none;flex:1;font-size:11.5px;color:var(--dim);text-align:right">
+      <span class="dot"></span>每次生成的成稿自动保存在这里 · 可查看 / 下载 / 删除
     </span>
   </div>
 
@@ -519,6 +533,19 @@
       <div class="case-more" id="caseMore"></div>
     </div>
   </div><!-- /casesView -->
+
+  <!-- ============ 提示词库（output/ 成稿） ============ -->
+  <div class="view" id="libView" style="display:none">
+    <div class="case-tools">
+      <input class="case-search" id="lq" placeholder="按文件名 / 输入内容 / 技能过滤……"
+             oninput="renderLibList()">
+      <button class="btn" onclick="loadLibrary(true)">刷新</button>
+    </div>
+    <div class="case-scroll" id="libScroll">
+      <div id="libList"></div>
+      <div class="case-more" id="libMore"></div>
+    </div>
+  </div><!-- /libView -->
 </main>
 
 <!-- ============ 设置弹窗 ============ -->
@@ -592,6 +619,19 @@
       <button class="btn" onclick="copyCasePrompt()">复制完整 prompt</button>
       <button class="btn" onclick="closeCase()">关闭</button>
       <button class="btn primary" onclick="useCase()">用这条生成 ➤</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 提示词详情弹窗 ============ -->
+<div class="mask" id="libMask" onclick="if(event.target===this)closeLibFile()">
+  <div class="modal case-detail">
+    <div class="modal-head" id="libHead">提示词</div>
+    <div class="case-body" id="libBody"></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="copyLibContent()">复制全文</button>
+      <button class="btn" onclick="downloadLibCurrent()">下载 .md</button>
+      <button class="btn primary" onclick="closeLibFile()">关闭</button>
     </div>
   </div>
 </div>
@@ -1339,17 +1379,147 @@ function switchView(v){
   CUR_VIEW = v;
   const chat = (v === 'chat');
   document.getElementById('chatView').style.display = chat ? '' : 'none';
-  document.getElementById('casesView').style.display = chat ? 'none' : '';
+  document.getElementById('casesView').style.display = v === 'cases' ? '' : 'none';
+  document.getElementById('libView').style.display = v === 'lib' ? '' : 'none';
   document.getElementById('chatTools').style.display = chat ? '' : 'none';
-  document.getElementById('caseTools').style.display = chat ? 'none' : '';
+  document.getElementById('caseTools').style.display = v === 'cases' ? '' : 'none';
+  document.getElementById('libTools').style.display = v === 'lib' ? '' : 'none';
   document.getElementById('tabChat').classList.toggle('active', chat);
-  document.getElementById('tabCases').classList.toggle('active', !chat);
+  document.getElementById('tabCases').classList.toggle('active', v === 'cases');
+  document.getElementById('tabLib').classList.toggle('active', v === 'lib');
   updateMemChip();
   if(chat){
     document.getElementById('input').focus();
-  }else if(!C.inited){
+  }else if(v === 'cases' && !C.inited){
     loadCases(true);
+  }else if(v === 'lib'){
+    loadLibrary(false);
   }
+}
+
+/* ============================== 提示词库（output/ 成稿） ============================== */
+/* 列表 / 查看 / 下载 / 删除。后端 /api/library*。文件名只经后端传回，前端按索引引用，避免引号注入。 */
+const LIB = { items: [], inited: false };
+
+async function loadLibrary(force){
+  if(LIB.inited && !force) return;
+  const box = document.getElementById('libList');
+  try{
+    const r = await fetch('/api/library');
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    LIB.items = j.items || [];
+    LIB.inited = true;
+    const tabN = document.getElementById('tabLibCount');
+    tabN.textContent = LIB.items.length ? ' ' + LIB.items.length : '';
+    renderLibList();
+  }catch(e){
+    box.innerHTML = `<div class="lib-empty" style="color:var(--bad)">加载失败：${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderLibList(){
+  const q = (document.getElementById('lq').value || '').trim().toLowerCase();
+  const box = document.getElementById('libList');
+  const list = LIB.items.filter(it =>
+    !q || (it.name + ' ' + (it.input || '') + ' ' + (it.skills || '')).toLowerCase().includes(q));
+  const more = document.getElementById('libMore');
+  more.textContent = '';
+  if(!list.length){
+    box.innerHTML = `<div class="lib-empty">${LIB.items.length ? '没有匹配的成稿，换个词试试' : '还没有成稿。生成一条提示词后，它会自动出现在这里。'}</div>`;
+    return;
+  }
+  box.innerHTML = list.map(it => {
+    const i = LIB.items.indexOf(it);
+    const kb = (it.size / 1024).toFixed(1);
+    const t = new Date(it.mtime * 1000).toLocaleString('zh-CN', { hour12: false });
+    return `
+    <div class="lib-item">
+      <div style="min-width:0;flex:1;cursor:pointer" onclick="openLibFile(${i})">
+        <div class="lib-name" title="${escapeHtml(it.name)}">${escapeHtml(it.input || it.name)}</div>
+        <div class="lib-meta" title="${escapeHtml(it.name)}">${escapeHtml(it.name)} · ${kb} KB · ${escapeHtml(t)}${it.skills && it.skills !== '-' ? ' · ' + escapeHtml(it.skills) : ''}</div>
+      </div>
+      <div class="lib-actions">
+        <button class="btn" onclick="openLibFile(${i})">查看</button>
+        <button class="btn" onclick="downloadLibFile(${i})">下载</button>
+        <button class="btn" onclick="deleteLibFile(${i})">删除</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function openLibFile(i){
+  const it = LIB.items[i];
+  if(!it) return;
+  try{
+    const r = await fetch('/api/library/file?name=' + encodeURIComponent(it.name));
+    if(!r.ok){
+      const j = await r.json().catch(() => ({}));
+      throw new Error(j.detail || ('HTTP ' + r.status));
+    }
+    const j = await r.json();
+    document.getElementById('libHead').textContent = it.input || it.name;
+    document.getElementById('libBody').innerHTML =
+      `<pre style="white-space:pre-wrap;word-break:break-word;font-size:12.5px;line-height:1.75;margin:0">${escapeHtml(j.content)}</pre>`;
+    document.getElementById('libMask').classList.add('show');
+    LIB.openName = it.name;
+  }catch(e){
+    alert('打不开这个成稿：' + e.message);
+  }
+}
+
+function closeLibFile(){
+  document.getElementById('libMask').classList.remove('show');
+}
+
+function downloadLibFile(i){
+  const it = LIB.items[i];
+  if(!it) return;
+  window.open('/api/library/download?name=' + encodeURIComponent(it.name));
+}
+
+function downloadLibCurrent(){
+  if(LIB.openName) window.open('/api/library/download?name=' + encodeURIComponent(LIB.openName));
+}
+
+async function deleteLibFile(i){
+  const it = LIB.items[i];
+  if(!it) return;
+  if(!confirm('确定删除这条成稿？\n\n' + it.name + '\n\n删除后不可恢复。')) return;
+  try{
+    const r = await fetch('/api/library/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: it.name }),
+    });
+    if(!r.ok){
+      const j = await r.json().catch(() => ({}));
+      throw new Error(j.detail || ('HTTP ' + r.status));
+    }
+    LIB.items.splice(i, 1);
+    document.getElementById('tabLibCount').textContent = LIB.items.length ? ' ' + LIB.items.length : '';
+    renderLibList();
+  }catch(e){
+    alert('删除失败：' + e.message);
+  }
+}
+
+async function copyLibContent(){
+  const pre = document.querySelector('#libBody pre');
+  if(!pre) return;
+  const t = pre.textContent;
+  const done = () => { const b = event && event.target; if(b){ const old = b.textContent; b.textContent = '已复制 ✓'; setTimeout(() => b.textContent = old, 1200); } };
+  if(navigator.clipboard && window.isSecureContext){
+    navigator.clipboard.writeText(t).then(done).catch(() => { copyLibFallback(t); done(); });
+  }else{ copyLibFallback(t); done(); }
+}
+
+function copyLibFallback(t){
+  const ta = document.createElement('textarea');
+  ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  try{ document.execCommand('copy'); }catch(e){}
+  document.body.removeChild(ta);
 }
 
 /* ============================== 案例库 ============================== */
@@ -1746,7 +1916,7 @@ function tplOf(k){
    目的：让你看到这个模板填完长什么样，照着改。 */
 const EX = {
 t1: ['站桩口播', `带货口播20秒【9:16·生成时选竖屏】：真人测评百芙乐蓝莓后生元饮
-产品拆件：哑光自立袋、袋身偏紫罗兰（绝不纯蓝）、白色螺旋盖、内容物深紫红略稠带果肉感
+产品拆件：蓝色吸嘴软袋，收腰立挺绝不瘪袋；上段蓝莓摄影满铺／中段深藏青波浪块／下段道奇蓝缀紫罗兰圆点（绝不发灰发青）；蓝色竖棱纹螺旋盖（绝不白盖）；液体深蓝紫红微稠
 出镜人设：28岁女营养师，燕麦针织＋亚麻围裙
 核心卖点（只选1个）：整果打浆＋益生菌发酵，花青素更好吸收
 前3秒钩子＝拧盖「啵」一声，紫红液体涌出袋口特写
@@ -1756,7 +1926,7 @@ t1: ['站桩口播', `带货口播20秒【9:16·生成时选竖屏】：真人�
 质感二选一：手机实拍测评感
 合规红线：不说治疗/改善/增强免疫力/通便；画面不渲字，价格卖点字卡后期贴`],
 t2: ['开箱', `带货开箱25秒【9:16·生成时选竖屏】：手部特写开箱百芙乐蓝莓后生元饮
-产品拆件：牛皮纸快递箱＋哑光自立袋（偏紫罗兰）／白色螺旋盖／深紫红果汁
+产品拆件：牛皮纸快递箱＋蓝色吸嘴软袋（上段蓝莓满铺／中段深藏青块／下段道奇蓝＋紫罗兰圆点）／蓝色竖棱纹螺旋盖／深蓝紫红果汁微稠
 出镜方式：只露手与半身，不露全脸；指甲干净、无饰品
 前3秒钩子＝划开封条「嗤啦」声＋箱盖翻开、袋装产品露出一角
 开箱序列（顺序不能乱）：划开封条→取出3袋→撕开单袋外膜→拿出产品→正反面各转一次给镜头
@@ -1766,7 +1936,7 @@ t2: ['开箱', `带货开箱25秒【9:16·生成时选竖屏】：手部特写�
 质感二选一：手机实拍测评感
 合规红线：不说治疗/改善/增强免疫力/通便；袋面只说"有印刷"不指定文字；画面不渲字`],
 t3: ['剧情', `带货剧情28秒单条【9:16·生成时选竖屏】
-产品：百芙乐蓝莓后生元饮＋产品拆件【哑光袋偏紫罗兰／白螺旋盖／深紫红果汁】
+产品：百芙乐蓝莓后生元饮＋产品拆件【蓝色吸嘴软袋·上蓝莓满铺／中藏青块／下亮蓝＋紫罗兰点／蓝色竖棱盖／液体深蓝紫红微稠】
 场景设定：周三早7点半，厨房，女儿上学前手忙脚乱
 角色：32岁妈妈，低马尾、米色家居服；同一角色全片不换装
 前3秒钩子＝妈妈一手拎书包一手翻冰箱，什么都没找到
@@ -1777,7 +1947,7 @@ t3: ['剧情', `带货剧情28秒单条【9:16·生成时选竖屏】
 质感二选一：手机实拍测评感
 合规红线：不说治疗/改善/增强免疫力/通便；画面不渲字，价格卖点字卡后期贴`],
 t4: ['Vlog', `带货Vlog 28秒单条【9:16·生成时选竖屏】
-产品：百芙乐蓝莓后生元饮＋产品拆件【哑光袋偏紫罗兰／白螺旋盖／深紫红果汁】
+产品：百芙乐蓝莓后生元饮＋产品拆件【蓝色吸嘴软袋·上蓝莓满铺／中藏青块／下亮蓝＋紫罗兰点／蓝色竖棱盖／液体深蓝紫红微稠】
 主角人设：30岁新媒体运营，灰卫衣＋棒球帽
 拍摄风格：手持跟拍、自然光、轻微晃动与对焦漂移（手机实拍感，不要电影感）
 时间线3个片段（每段8秒左右）：07:20出门前→12:40工位下午→18:30回家路上
@@ -1788,7 +1958,7 @@ t4: ['Vlog', `带货Vlog 28秒单条【9:16·生成时选竖屏】
 合规红线：不说治疗/改善/增强免疫力/通便；画面不渲字`],
 t5: ['产品片', `带货产品片20秒【9:16·生成时选竖屏】：无人物出镜
 产品：百芙乐蓝莓后生元饮
-产品拆件：哑光自立袋、袋身偏紫罗兰（绝不纯蓝）、白色螺旋盖、内容物深紫红略稠带果肉感
+产品拆件：蓝色吸嘴软袋，收腰立挺绝不瘪袋；上段蓝莓摄影满铺／中段深藏青波浪块／下段道奇蓝缀紫罗兰圆点（绝不发灰发青）；蓝色竖棱纹螺旋盖（绝不白盖）；液体深蓝紫红微稠
 环境与布景：深灰石材台面＋一束侧逆光
 美学词（开头定调）：暗调高级感
 前3秒钩子＝袋身从上方落下、稳稳立住，袋内液体晃出漩涡
@@ -1796,7 +1966,7 @@ t5: ['产品片', `带货产品片20秒【9:16·生成时选竖屏】：无人�
 收尾：产品定格英雄帧，留干净空白区给后期字卡——画面不渲任何文字
 合规红线：不说任何功效词；画面不渲字，价格卖点字卡后期贴`],
 t6: ['ASMR', `带货ASMR 20秒【9:16·生成时选竖屏】：只出手部与近景，不露全脸
-产品：百芙乐蓝莓后生元饮＋哑光袋偏紫罗兰／白螺旋盖／深紫红果汁带果肉感（挂壁明显）
+产品：百芙乐蓝莓后生元饮＋蓝色吸嘴软袋·上蓝莓满铺／下亮蓝紫点／蓝色竖棱盖／液体深蓝紫红微稠（挂壁明显）
 镜头：微距/探针镜头感，浅景深，声音优先
 画面-声音配对（铁律：一拍一个可见变化＋一个配套声音）：
  1 手指扣住螺旋盖→拧开「啵」的一声
@@ -1809,7 +1979,7 @@ t6: ['ASMR', `带货ASMR 20秒【9:16·生成时选竖屏】：只出手部与�
 台词像聊天、不像广告
 合规红线：不说治疗/改善/增强免疫力/通便；不出现夸张功效反应（如捂肚子）；画面不渲字`],
 t7: ['对比', `带货对比25秒【9:16·生成时选竖屏】：真人对镜头做对比测评百芙乐蓝莓后生元饮
-产品拆件：本方哑光袋偏紫罗兰；对比物：市面常见果汁饮料一杯，不点名任何品牌
+产品拆件：本方蓝色吸嘴软袋（上蓝莓满铺／下道奇蓝＋紫罗兰点／蓝色竖棱盖）；对比物：市面常见果汁饮料一杯，不点名任何品牌
 出镜人设：28岁女营养师，燕麦针织＋亚麻围裙
 前3秒钩子＝两杯并置，一杯浑浊一杯清透，手指依次点过去＋一声轻敲玻璃
 对比维度（3个以内）：颜色与挂壁质地／配料表（字后期贴）／喝后口腔感受
@@ -1819,7 +1989,7 @@ t7: ['对比', `带货对比25秒【9:16·生成时选竖屏】：真人对镜�
 质感二选一：手机实拍测评感
 合规红线：不点名不贬低任何竞品、不做功效对比；画面不渲字，配料表字卡后期贴`],
 t8: ['反差', `带货反差总长20秒【9:16·生成时选竖屏】：一个包袱的短视频，产品是包袱落点
-产品：百芙乐蓝莓后生元饮＋哑光袋偏紫罗兰／白螺旋盖／深紫红果汁
+产品：百芙乐蓝莓后生元饮＋蓝色吸嘴软袋·上蓝莓满铺／下亮蓝紫点／蓝色竖棱盖／液体深蓝紫红
 角色：28岁女白领，低马尾素色衬衫，表演一本正经、不夸张扮丑
 前3秒钩子＝她把一袋深紫色饮品倒进高脚杯，表情像在喝红酒
 铺垫：同事以为她在喝什么高级货，凑过来问
