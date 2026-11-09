@@ -142,6 +142,246 @@ def _fix_timecodes(text: str) -> tuple[str, list[dict]]:
     return out, issues
 
 
+# ---------------------------------------------------------------- 时间码数值结构（C 方案 · 代码硬校验）
+#
+# 2026-11-09：此前秒数数值完全交给 lint 技能的 S2/S8（模型自查），而技能里压根
+# 没有「单段不能超 5 秒」这一条。实测 11:22 产品片 2/2/5/6/5/5/3/2=30 质检判合格，
+# 6 秒段就这么交付了。这里补四道纯算术硬判，不合格只改方括号里的数字、正文一字不动：
+#
+#   ① 每段 1~5 秒  ② 段间首尾相接  ③ 首段从 0 / 末段 = 总时长  ④ 各段之和 = 总时长
+#
+# 依据：
+#   - 5 秒上限：data/style-library.json:264 的经验值（可调常量，不是平台规定）
+#   - 30 秒：Seedance 2.5 单次生成物理上限 —— 只提醒，绝不拿来砍用户内容
+#   - 总时长取值优先级：用户原话 > 稿内声明 > 末段终点（退化，此时 ④ 是自证）
+#
+# 与 A 的区别：这里不编排节奏，几段、哪段长哪段短仍由模型排，代码只保证数字自洽。
+
+TIMING_SEG_MIN = 1          # 单段下限（低于 1 秒平台解析不出）
+TIMING_SEG_MAX = 5          # 单段上限（经验值，可改）
+TIMING_PLATFORM_MAX = 30    # 单次生成上限，只提醒不改
+TIMING_COMPACT_WARN = 1     # 单段被压缩超过这个秒数 → 挂黄字提醒人工看一眼
+
+# 「总时长 28 秒」「【时长】28 秒」「总和 28 秒」「时间轴按 28 秒排布」等
+_TOTAL_RE = re.compile(
+    r"(?:总时长|全片时长|【\s*时长\s*】|时长|总和|合计|时间轴按)"
+    r"\s*[:：】]?\s*(?:为|是|=|约)?\s*(\d{1,3})\s*(?:秒|s\b)",
+    re.I,
+)
+
+
+def _timing_segments(text: str) -> list[dict]:
+    """把稿子里的时间码解析成秒。格式已由 _fix_timecodes 统一，这里只取数值。"""
+    out: list[dict] = []
+    for m in _TIME_RANGE.finditer(text or ""):
+        _lb, m1, s1, _sep, m2, s2, _rb = m.groups()
+        mm1, ss1, mm2, ss2 = int(m1), int(s1), int(m2), int(s2)
+        # 沿用 _scan_timecodes 的保护：分/秒 > 59 当普通文字，不参与判定
+        if max(ss1, ss2, mm1, mm2) > 59:
+            continue
+        start, end = mm1 * 60 + ss1, mm2 * 60 + ss2
+        out.append({
+            "raw": m.group(0), "pos": m.span(),
+            "start": start, "end": end, "dur": end - start,
+        })
+    return out
+
+
+def _user_seconds(user_input: str) -> int | None:
+    """从用户原话里抽总时长。
+
+    输入框里常贴着整份模板（含「前3秒钩子」「【15-30】秒」），裸抓第一个数字会
+    把 3 秒当成全片长度。所以：去掉片型区间 → 收集所有「N 秒」→ 只留 ≥8 秒的
+    候选 → 取最大值。写「30 秒的片子，前 3 秒抓人」也能正确取 30。
+    """
+    if not user_input:
+        return None
+    clean = re.sub(r"【[^】]*】", " ", user_input)
+    clean = re.sub(r"\d{1,3}\s*[-–—~～]\s*\d{1,3}\s*(?:秒|s\b)", " ", clean, flags=re.I)
+    nums = [int(x) for x in re.findall(r"(?<!\d)(\d{1,3})\s*(?:秒|s\b)", clean, re.I)]
+    candidates = [v for v in nums if 8 <= v <= 300]
+    return max(candidates) if candidates else None
+
+
+def _declared_seconds(text: str) -> int | None:
+    """从稿子自己写的「总时长 XX 秒」里取值。"""
+    m = _TOTAL_RE.search(text or "")
+    if not m:
+        return None
+    v = int(m.group(1))
+    return v if 1 <= v <= 300 else None
+
+
+def _resolve_total(text: str, user_input: str, segs: list[dict]) -> tuple[int, str]:
+    """总时长三级取值：用户原话 > 稿内声明 > 末段终点（退化）。"""
+    u = _user_seconds(user_input)
+    if u:
+        return u, "用户原话"
+    d = _declared_seconds(text)
+    if d:
+        return d, "稿内声明"
+    return segs[-1]["end"], "末段终点（退化）"
+
+
+def _timing_issues(segs: list[dict], total: int) -> list[dict]:
+    """四道硬 check，只做加减法，不读画面文字。"""
+    issues: list[dict] = []
+    for i, s in enumerate(segs, 1):
+        if s["dur"] > TIMING_SEG_MAX:
+            issues.append({"code": "seg_too_long",
+                           "text": f"第 {i} 段 {s['dur']} 秒，超过 {TIMING_SEG_MAX} 秒上限"})
+        elif s["dur"] < TIMING_SEG_MIN:
+            issues.append({"code": "seg_too_short",
+                           "text": f"第 {i} 段 {s['dur']} 秒，短于 {TIMING_SEG_MIN} 秒下限"})
+    for i in range(len(segs) - 1):
+        if segs[i]["end"] != segs[i + 1]["start"]:
+            gap = segs[i + 1]["start"] - segs[i]["end"]
+            word = "断档" if gap > 0 else "重叠"
+            issues.append({"code": "gap",
+                           "text": f"第 {i+1}/{i+2} 段之间{word} {abs(gap)} 秒"})
+    if segs[0]["start"] != 0:
+        issues.append({"code": "start", "text": f"首段从 {segs[0]['start']} 秒起，不是 00:00"})
+    if segs[-1]["end"] != total:
+        issues.append({"code": "end",
+                       "text": f"末段终点 {segs[-1]['end']} 秒 ≠ 总时长 {total} 秒"})
+    if sum(s["dur"] for s in segs) != total:
+        issues.append({"code": "sum",
+                       "text": f"各段之和 {sum(s['dur'] for s in segs)} 秒 ≠ 总时长 {total} 秒"})
+    return issues
+
+
+def _redistribute(durations: list[int], total: int) -> list[int] | None:
+    """按原节奏比例重排段长，尽量保留长短差异；排不出返回 None。
+
+    可行性只有一条：n×下限 ≤ total ≤ n×上限。不成立时不硬凑，交回给第三档处理。
+    """
+    n = len(durations)
+    if n == 0:
+        return None
+    lo, hi = TIMING_SEG_MIN, TIMING_SEG_MAX
+    if not (n * lo <= total <= n * hi):
+        return None
+
+    old_sum = sum(max(lo, d) for d in durations) or 1
+    out = [min(hi, max(lo, round(d * total / old_sum))) for d in durations]
+    diff = total - sum(out)
+
+    # 余量优先摊给原本长的段，节奏才不会被压平
+    order = sorted(range(n), key=lambda i: -durations[i])
+    guard = 0
+    while diff and guard < n * (hi - lo) * 4 + 20:
+        moved = False
+        for i in order:
+            if diff > 0 and out[i] < hi:
+                out[i] += 1
+                diff -= 1
+                moved = True
+            elif diff < 0 and out[i] > lo:
+                out[i] -= 1
+                diff += 1
+                moved = True
+            if diff == 0:
+                break
+        if not moved:
+            break
+        guard += 1
+
+    if diff or any(not (lo <= v <= hi) for v in out):
+        return None
+    return out
+
+
+def _fmt_range(start: int, dur: int) -> str:
+    end = start + dur
+    return f"[{start//60:02d}:{start%60:02d}-{end//60:02d}:{end%60:02d}]"
+
+
+def _fix_timing_impl(text: str, user_input: str = "") -> tuple[str, dict]:
+    report: dict = {
+        "checked": False, "ok": True, "total": None, "total_source": "",
+        "segments": 0, "issues": [], "fixed": [], "notes": [],
+    }
+    segs = _timing_segments(text)
+    if len(segs) < 2:
+        # 没有时间码 / 只有一段 → 不量、不硬造
+        return text, report
+
+    report["checked"] = True
+    report["segments"] = len(segs)
+    total, source = _resolve_total(text, user_input, segs)
+    report["total"], report["total_source"] = total, source
+
+    if source.startswith("末段终点"):
+        report["notes"].append(
+            f"没找到明确总时长，按末段终点 {total} 秒作基准；此时「总和 = 总时长」为自证，建议人工核对。"
+        )
+    if total > TIMING_PLATFORM_MAX:
+        report["notes"].append(
+            f"本条声明 {total} 秒，超过单次生成 {TIMING_PLATFORM_MAX} 秒上限；"
+            "数字已按声明值校验，实际生成仍需拆成多条提示词。"
+        )
+
+    issues = _timing_issues(segs, total)
+    report["issues"] = issues
+    if not issues:
+        return text, report          # 全合格：一个字都不动
+    report["ok"] = False
+
+    durations = [s["dur"] for s in segs]
+    new_durs = _redistribute(durations, total)
+    if new_durs is None:
+        n = len(segs)
+        report["notes"].append(
+            f"共 {n} 段、总时长 {total} 秒，无法在每段 {TIMING_SEG_MIN}~{TIMING_SEG_MAX} 秒内排满"
+            f"（{n} 段最多装 {n * TIMING_SEG_MAX} 秒）。本次未改数字，请减少段数或拆成多条生成。"
+        )
+        return text, report          # 第三档：不硬凑、不静默改
+
+    new_raws, cursor = [], 0
+    for d in new_durs:
+        new_raws.append(_fmt_range(cursor, d))
+        cursor += d
+
+    out = text
+    fixed_items: list[dict] = []
+    compact_notes: list[str] = []
+    # 从后往前按位置替换，前面的下标不会因为长度变化而失效
+    for i in range(len(segs) - 1, -1, -1):
+        seg, new_raw = segs[i], new_raws[i]
+        a, b = seg["pos"]
+        out = out[:a] + new_raw + out[b:]
+        # 只把「数字真的变了」的段记进修正明细，别把没动的也算成改过
+        if new_raw != seg["raw"]:
+            fixed_items.append({
+                "index": i + 1, "from": seg["raw"], "to": new_raw,
+                "sec_from": seg["dur"], "sec_to": new_durs[i],
+            })
+            if seg["dur"] - new_durs[i] > TIMING_COMPACT_WARN:
+                compact_notes.append(
+                    f"第 {i+1} 段由 {seg['dur']} 秒压到 {new_durs[i]} 秒，请确认段内动作演得完。"
+                )
+    fixed_items.reverse()
+    compact_notes.reverse()
+    report["fixed"] = fixed_items
+    report["notes"] = compact_notes + report["notes"]
+    report["notes"].append(
+        f"已自动修正 {len(fixed_items)} 处时间码数字（只改方括号，画面文字一字未动）。"
+    )
+    return out, report
+
+
+def _fix_timing(text: str, user_input: str = "") -> tuple[str, dict]:
+    """C 方案主入口。任何异常都不许影响出稿，原样返回并记一条说明。"""
+    try:
+        return _fix_timing_impl(text, user_input)
+    except Exception as e:  # noqa: BLE001
+        return text, {
+            "checked": False, "ok": True, "total": None, "total_source": "",
+            "segments": 0, "issues": [], "fixed": [],
+            "notes": [f"时间码数值校验异常，已跳过：{e}"],
+        }
+
+
 def _extract_product_name(user_input: str) -> str:
     """从用户输入里抽产品名。
 
@@ -1125,6 +1365,20 @@ class Agent:
         realism["subject"] = subject
         realism["tier"] = tier
 
+        # C 方案：时间码数值结构硬校验（2026-11-09）。
+        # 特意放在产品名/真实感等「可能再改一次稿」的兜底之后、质检之前 ——
+        # 这样后面所有环节拿到的都是数字合法的稿，不用指望模型自查。
+        timing_reports: list[dict] = []
+        gen["content"], gen_timing = _fix_timing(gen["content"], user_input)
+        if gen_timing.get("fixed") or gen_timing.get("notes"):
+            timing_reports.append({"stage": "generate", **gen_timing})
+        if gen_timing.get("fixed"):
+            emit("timing_fixed", {
+                "stage": "generate",
+                "count": len(gen_timing["fixed"]),
+                "items": [f"{x['from']} → {x['to']}" for x in gen_timing["fixed"]],
+            })
+
         emit("generated", {"chars": len(gen["content"])})
 
         result = {
@@ -1184,6 +1438,20 @@ class Agent:
                 # 修正稿也可能把产品名改丢 —— 修正后补最后一道检查
                 if rev.get("revised") and prod and prod not in rev["revised"]:
                     rev["revised"] = self._fix_product_name(prod, rev["revised"])
+
+                # C 方案第二处：修正稿是网页「复制即用」和 output/ 存的那份，
+                # 模型改稿时完全可能又写出一个 6 秒段，所以必须再量一次。
+                if rev.get("revised"):
+                    rev["revised"], rev_timing = _fix_timing(rev["revised"], user_input)
+                    if rev_timing.get("fixed") or rev_timing.get("notes"):
+                        timing_reports.append({"stage": "revision", **rev_timing})
+                    if rev_timing.get("fixed"):
+                        emit("timing_fixed", {
+                            "stage": "revision",
+                            "count": len(rev_timing["fixed"]),
+                            "items": [f"{x['from']} → {x['to']}" for x in rev_timing["fixed"]],
+                        })
+
                 result["revision"] = rev
                 emit("revised", {"chars": len(rev.get("revised") or "")})
             else:
@@ -1191,5 +1459,6 @@ class Agent:
                     "reason": rev.get("error") or "模型没有给出修正稿，已跳过错",
                 })
 
+        result["timing"] = timing_reports
         return result
 
