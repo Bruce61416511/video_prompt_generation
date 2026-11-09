@@ -1103,7 +1103,7 @@ async function realSend(text, el, skills){
     const tmIss   = tmList.reduce((a, r) => a.concat(r.issues || []), []);
     if(tmFixed || tmNotes.length){
       html += `<div style="margin:0 0 14px;padding:9px 12px;border:1px solid var(--line);border-left:3px solid var(--warn);border-radius:8px;background:var(--panel2);font-size:12px;line-height:1.85;color:var(--dim)">
-        <b style="color:var(--warn)">⚠ 时间码数值校验</b>${tmFixed
+        <b style="color:var(--warn)">⚠ 时间码校验</b>${tmFixed
           ? `：已自动修正 <b>${tmFixed}</b> 处（只改方括号里的数字，画面文字一字未动）`
           : '：本次未改动数字'}
         ${tmIss.length   ? `<div style="margin-top:4px">原问题：${escapeHtml(tmIss.map(x => x.text || x).join('；'))}</div>` : ''}

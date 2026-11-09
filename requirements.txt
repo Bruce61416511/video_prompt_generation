@@ -9,7 +9,9 @@
 #     .venv/bin/pip install -r requirements.txt
 #     .venv/bin/python run.py --host 0.0.0.0 --port 8099
 #
-# 只有这两个包。不依赖任何前端构建工具，页面是原生 HTML + JS。
+# 只依赖这几个包。不依赖任何前端构建工具，页面是原生 HTML + JS。
+# PyYAML 用于解析 SKILL.md 的 frontmatter；缺了会降级到逐行兜底，嵌套字段会丢。
 
 fastapi>=0.110
 uvicorn>=0.27
+PyYAML>=6.0

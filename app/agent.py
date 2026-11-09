@@ -29,6 +29,7 @@ from typing import Callable, Iterable
 from openai import OpenAI
 
 from .skill_loader import SkillLoader
+from .timing_capacity import capacity_report
 
 
 # ---------------------------------------------------------------- 配置
@@ -296,6 +297,26 @@ def _fmt_range(start: int, dur: int) -> str:
     return f"[{start//60:02d}:{start%60:02d}-{end//60:02d}:{end%60:02d}]"
 
 
+def _sync_declared_total(text: str, total: int) -> tuple[str, int]:
+    """把稿内「总时长 N 秒」类声明里的数字同步成 total。
+
+    只替换 _TOTAL_RE 捕获到的那个数字本身，声明句其余文字、画面文字一律不动。
+    必须在所有按位置的时间码替换做完之后再调用，否则位置会失效。
+    """
+    changed = 0
+
+    def repl(m):
+        nonlocal changed
+        whole = m.group(0)
+        a, b = m.start(1) - m.start(0), m.end(1) - m.start(0)
+        if whole[a:b] == str(total):
+            return whole
+        changed += 1
+        return whole[:a] + str(total) + whole[b:]
+
+    return _TOTAL_RE.sub(repl, text), changed
+
+
 def _fix_timing_impl(text: str, user_input: str = "") -> tuple[str, dict]:
     report: dict = {
         "checked": False, "ok": True, "total": None, "total_source": "",
@@ -324,6 +345,15 @@ def _fix_timing_impl(text: str, user_input: str = "") -> tuple[str, dict]:
     issues = _timing_issues(segs, total)
     report["issues"] = issues
     if not issues:
+        # 时间码本来就合法，但稿内另写「总时长 30 秒」而用户说 45 秒时，稿子仍自相矛盾。
+        # 这一档时间码没被改，就不越界去改正文，只明确提醒人工核对。
+        if source == "用户原话":
+            declared = _declared_seconds(text)
+            if declared is not None and declared != total:
+                report["notes"].append(
+                    f"稿内写「总时长 {declared} 秒」，与你输入的 {total} 秒不一致；"
+                    "时间码本身合法，本次未改动任何数字，请手动核对这句声明。"
+                )
         return text, report          # 全合格：一个字都不动
     report["ok"] = False
 
@@ -331,9 +361,17 @@ def _fix_timing_impl(text: str, user_input: str = "") -> tuple[str, dict]:
     new_durs = _redistribute(durations, total)
     if new_durs is None:
         n = len(segs)
+        lo, hi = TIMING_SEG_MIN, TIMING_SEG_MAX
+        if total > n * hi:
+            need = (total + hi - 1) // hi
+            advice = (f"当前段数不够：{n} 段最多只能装 {n * hi} 秒，"
+                      f"建议至少增加到 {need} 段（或拆成多条生成）")
+        else:
+            advice = (f"当前段数过多：{n} 段最少也要 {n * lo} 秒，"
+                      f"建议减少到 {total // lo} 段以内（或提高总时长声明）")
         report["notes"].append(
-            f"共 {n} 段、总时长 {total} 秒，无法在每段 {TIMING_SEG_MIN}~{TIMING_SEG_MAX} 秒内排满"
-            f"（{n} 段最多装 {n * TIMING_SEG_MAX} 秒）。本次未改数字，请减少段数或拆成多条生成。"
+            f"共 {n} 段、总时长 {total} 秒，无法在每段 {lo}~{hi} 秒内排满。{advice}。"
+            "本次未改数字，稿子原样交付。"
         )
         return text, report          # 第三档：不硬凑、不静默改
 
@@ -365,8 +403,20 @@ def _fix_timing_impl(text: str, user_input: str = "") -> tuple[str, dict]:
     report["fixed"] = fixed_items
     report["notes"] = compact_notes + report["notes"]
     report["notes"].append(
-        f"已自动修正 {len(fixed_items)} 处时间码数字（只改方括号，画面文字一字未动）。"
+        f"已自动修正 {len(fixed_items)} 处时间码数字（只改数字，画面文字一字未动）。"
     )
+
+    # 时间码已经重排完，此时同步稿内的总时长声明数字，避免「时间码到 00:45、
+    # 正文却写总时长 30 秒」的自相矛盾。只在用户原话优先级下做，只改那个数字。
+    if source == "用户原话":
+        declared = _declared_seconds(text)
+        if declared is not None and declared != total:
+            out, n_sync = _sync_declared_total(out, total)
+            if n_sync:
+                report["notes"].append(
+                    f"稿内原写「总时长 {declared} 秒」，与你输入的 {total} 秒不一致；"
+                    f"已同步 {n_sync} 处声明数字为 {total} 秒（只改这个数字，其余文字一字未动）。"
+                )
     return out, report
 
 
@@ -1459,6 +1509,16 @@ class Agent:
                     "reason": rev.get("error") or "模型没有给出修正稿，已跳过错",
                 })
 
+        # 事后容量核算（2026-11-09，A 方案已回退）：
+        # C 只保证「数字自洽」，这里再量一遍「模型自己排的秒数够不够演完它自己写的内容」。
+        # 只报不改 —— 不删动作、不压内容、不动时间码；中文动作切分有误报，
+        # 所以报告里给估算依据和建议秒数，由人判断。
+        # 只算最终交付的那一份（revision.revised 优先，其次 generate.content，
+        # 与前端「复制即用」取的是同一份），避免第一稿/修正稿重复弹同一条。
+        final_text = (result.get("revision") or {}).get("revised") or gen["content"]
+        cap = capacity_report(final_text, user_input)
+        if cap.get("notes"):
+            timing_reports.append({"stage": "capacity", **cap})
         result["timing"] = timing_reports
         return result
 
