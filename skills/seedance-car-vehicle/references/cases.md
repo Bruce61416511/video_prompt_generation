@@ -1,6 +1,6 @@
 # Case evidence · Cars and vehicles at speed
 
-22 verified cases are filed under this template in awesome-seedance; the 8 hottest are below, full prompts included. Pick one as the anchor before drafting.
+23 verified cases are filed under this template in awesome-seedance; the 8 hottest are below, full prompts included. Pick one as the anchor before drafting.
 
 Generated from `data/cases.json` + `data/case-taxonomy.json`. Do not hand-edit.
 
@@ -151,7 +151,7 @@ Camera pulls higher still, showing the bike as a small red shape on the winding 
 
 ## E5 · White Supercar Soars Across Seoul’s River and Lands on a Rooftop
 
-- Seedance 2.5 · creator: @aiwithaayat · heat: 75
+- Seedance 2.5 · creator: @aiwithaayat · heat: 74
 - Evidence: [GoodCase](https://goodcase.ai/cases/seedance-2-5-created-a-video-30-second-featuring-a-futuristic-white-supercar-driving-throu-f4b0d3637ef0) · [finished media](https://media.goodcase.ai/cases/7dc3776da6dc.mp4) · [poster](https://media.goodcase.ai/cases/9c32b67ed90d.jpg) · [original source](https://x.com/aiwithaayat/status/2112025080335339907)
 - Summary: A futuristic supercar, a fearless driver, and an unbelievable ride through the city. When luxury meets imagination, anything becomes possible. Created on seedan…
 

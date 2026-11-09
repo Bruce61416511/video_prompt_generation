@@ -510,9 +510,12 @@ def _save_output(user_input: str, result: dict) -> str | None:
         ts = time.strftime("%Y%m%d_%H%M%S")
         slug = re.sub(r'[\\/:*?"<>|\r\n]+', "_", user_input.strip())[:24].strip("_") or "gen"
         path = OUTPUT_DIR / f"{ts}_{slug}.md"
+        # 2026-11-09：run_full 返回的字段是 skills_used，旧代码读 skills，
+        # 导致每份成稿的「> 技能」恒为 "-"，提示词库里也查不到本次用了哪些技能。
+        used = result.get("skills_used") or result.get("skills") or []
         header = (
             f"> 输入：{user_input.strip()}\n"
-            f"> 技能：{', '.join(result.get('skills') or []) or '-'}\n"
+            f"> 技能：{', '.join(used) or '-'}\n"
             f"> 时间：{time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
         )
         path.write_text(header + final, encoding="utf-8")

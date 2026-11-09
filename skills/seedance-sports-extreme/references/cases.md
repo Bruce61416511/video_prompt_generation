@@ -217,7 +217,7 @@ Negative prompt: no subtitles, no text, no logos, no watermark, no distorted fac
 
 ## E5 · Elephant Launches Acrobat into Flips and a Horseback Landing
 
-- Seedance 2.5 · creator: @sipteaandcoffee · heat: 62
+- Seedance 2.5 · creator: @sipteaandcoffee · heat: 61
 - Evidence: [GoodCase](https://goodcase.ai/cases/seedance-2-5-i-m-a-flexible-girl-0a4d9719d867) · [finished media](https://media.goodcase.ai/cases/9c865aa2ff52.mp4) · [poster](https://media.goodcase.ai/cases/ec4e8d1301a8.jpg) · [original source](https://x.com/sipteaandcoffee/status/2107060987157524524)
 - Summary: I'm a flexible girl Seedance 2.5 on @TapNow_AI Prompt Create a 15-second ultra-realistic vertical 9:16 circus performance video, filmed casually by an audience …
 
@@ -342,7 +342,7 @@ Create it 30-second video featuring a breathtaking cinematic acrobatic performan
 
 ## E8 · Seedance Smooth Snowboard Run Through a Terrain Park
 
-- Seedance 2.5 · creator: @nawalsehar · heat: 57 · stability: 73
+- Seedance 2.5 · creator: @nawalsehar · heat: 56 · stability: 73
 - Evidence: [GoodCase](https://goodcase.ai/cases/nawalsehar-seedance-ai-e50de3d2896e) · [finished media](https://media.goodcase.ai/media/video/nawalsehar-seedance-ai-e50de3d2896e.mp4) · [poster](https://media.goodcase.ai/media/poster/nawalsehar-seedance-ai-e50de3d2896e.jpg) · [original source](https://x.com/nawalsehar/status/2088854230626865490)
 - Summary: Some runs are all about the flow. Seedance 2.5 keeps every carve, jump, and landing feeling naturally smooth with seamle
 
