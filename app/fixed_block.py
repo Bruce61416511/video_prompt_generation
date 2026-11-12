@@ -62,6 +62,13 @@ REF_LINE = (
 BODY_INSTRUCTION = (
     "—— 本段输出规则 ——\n"
     "只写这一段的内容：开场画面、中段推进、结尾定格、台词等本段要素。\n"
+    "输出格式（全片所有段必须同一个骨架）：每个镜头一格，"
+    "用加粗时间码标题开头，如「**[00:00-00:02] 开场**」「**[00:02-00:05] 中段**」；"
+    "台词单独成行放在对应格后面。\n"
+    "不要把正文包进代码围栏（```），不要用「0-2 秒｜开场」这种行内格式，"
+    "不要输出 JSON。\n"
+    "正文里不要出现任何外部链接、案例名或案例引用（goodcase.ai 等网址）—— "
+    "案例只用来学写法，网址写进交付稿会被清洗掉。\n"
     "下面的「本片锚点」是全片统一的事实：写画面和台词必须严格照用，"
     "产品外观、人物长相、声音规矩都不许自己另编；但不要把锚点那几行原样抄进正文。\n"
     "不要复述全片设定块（固定块、产品/人物锁定、合规红线、不变项、参考图清单）"
@@ -209,6 +216,13 @@ _ANCHOR_HEAD_RE = re.compile(
 ANCHOR_SKIP_LINES = 12
 LOCK_SKIP_LINES = 6
 
+# 整行代码围栏（``` / ```text）：模型偶尔把正文整段包进围栏，标记行本身没有内容。
+_FENCE_RE = re.compile(r"^\s*```[A-Za-z0-9_+-]*\s*$")
+# goodcase.ai 外链行（skill 的「锚点案例」引用）：复制全文会把外链带给豆包。
+_EXT_LINK_RE = re.compile(
+    r"https?://(?:[A-Za-z0-9-]+\.)*goodcase\.ai\b"
+)
+
 
 def strip_fixed_block(text: str) -> str:
     """从模板里剥掉固定块段（防御用）。
@@ -241,31 +255,45 @@ def clean_model_output(text: str) -> tuple[str, list[str], list[str]]:
     若删完剩下不到原文 30%，放弃清洗并报 issue —— 绝不把正文吃掉。
     注意：「【全局约束】无字幕、无 BGM」这类本段画面负面词是有用信息，不删；
     跨段不一致靠锚点里的统一声音规矩解决，而不是把负面词删掉。
-    返回 (清洗后正文, 删掉的标题, 问题列表)。
+    另有两类确定性垃圾先摘掉（2026-11-12 实测）：
+      a) 整行代码围栏 ``` —— 模型有时把正文整个包进围栏，复制给豆包带一坨 markdown；
+      b) 带 goodcase.ai 外链的「锚点案例」行 —— 外链不该进交付稿（上游站还有关停风险）。
+    返回 (清洗后正文, 删掉的标题/垃圾行, 问题列表)。
     """
     raw = (text or "").strip()
     if not raw:
         return "", [], []
-    out, removed, skipping, dropped, limit = [], [], False, 0, LOCK_SKIP_LINES
+    pre, dropped = [], []
+    for line in raw.splitlines():
+        if _FENCE_RE.match(line):
+            dropped.append(line.strip()[:70])
+            continue
+        if _EXT_LINK_RE.search(line):
+            dropped.append(line.strip()[:70])
+            continue
+        pre.append(line)
+    raw = "\n".join(pre)
+    out, removed, skipping, dropped_n, limit = [], [], False, 0, LOCK_SKIP_LINES
     for line in raw.splitlines():
         s = line.strip()
         is_anchor = bool(_ANCHOR_HEAD_RE.match(s))
         if not skipping and (is_anchor or _LOCK_HEAD_RE.match(s)):
             removed.append(s[:70])
-            skipping, dropped = True, 1
+            skipping, dropped_n = True, 1
             limit = ANCHOR_SKIP_LINES if is_anchor else LOCK_SKIP_LINES
             continue
         if skipping:
-            if (not s or dropped >= limit or _LOCK_HEAD_RE.match(s)
+            if (not s or dropped_n >= limit or _LOCK_HEAD_RE.match(s)
                     or _ANCHOR_HEAD_RE.match(s)
                     or s.startswith(("【", "#", "——", "```"))):
                 skipping = False
                 if s:
                     out.append(line)
                 continue
-            dropped += 1
+            dropped_n += 1
             continue
         out.append(line)
+    removed = dropped + removed
     cleaned = "\n".join(out).strip()
     issues = []
     if cleaned and len(cleaned) < len(raw) * 0.3:
