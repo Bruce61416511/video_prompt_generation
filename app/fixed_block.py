@@ -372,6 +372,39 @@ def _near_product(text: str, word: str, nouns: list[str]) -> bool:
     return False
 
 
+# 颜色解析：F 拆件里的「深紫红」「银色」「透明」是复合色，不能拆成单字当锁定色。
+_COLOR_MOD = ("深", "浅", "亮", "暗", "冷", "暖", "淡", "浓")
+_COLOR_BASE = ("透明", "红", "蓝", "绿", "黄", "白", "黑", "金", "银", "紫", "橙", "粉", "灰", "青", "棕")
+_COLOR_RE = re.compile(
+    "(?:" + "|".join(_COLOR_MOD) + ")?(?:" + "|".join(_COLOR_BASE) + ")+色?"
+)
+# 正文显式颜色断言：只认「X色」这类明确说法，不认裸色字（避免「蓝莓」里的蓝被当冲突）。
+_COLOR_ASSERT_RE = re.compile(r"[深浅亮暗冷暖淡浓]?[红蓝绿黄白黑金银紫橙粉灰青棕]色")
+_LIGHT_WORDS = (
+    "冷白", "暖", "柔光", "自然光", "高光", "反光", "主光", "打光", "灯光",
+    "暗部", "阴影", "背景", "环境光", "光", "色调",
+)
+
+
+def _extract_color_phrases(text: str) -> list[str]:
+    """从 F 拆件里取出真实用过的颜色短语（深紫红/银色/透明…）。"""
+    return [m.group(0) for m in _COLOR_RE.finditer(text or "")]
+
+
+def _explicit_color_conflict(text: str, opp_char: str, nouns: list[str]) -> bool:
+    """正文是否在产品上下文里「显式断言」了一个与 F 不同的颜色（X色），且不是打光词。"""
+    for m in _COLOR_ASSERT_RE.finditer(text or ""):
+        if opp_char not in m.group(0):
+            continue
+        s, e = m.start(), m.end()
+        window = (text or "")[max(0, s - 12): e + 12]
+        if any(lw in window for lw in _LIGHT_WORDS):
+            continue
+        if any(n in window for n in nouns):
+            return True
+    return False
+
+
 def check_body_vs_fixed(body: str, fixed: str) -> list[str]:
     """正文 vs 固定块 F 的运行时冲突检测（问题②）。
 
@@ -440,24 +473,34 @@ def check_body_vs_fixed(body: str, fixed: str) -> list[str]:
                         break
                 break
 
-    # —— 4) 产品材质/颜色（疑似：限定在产品名词附近，降低误报）——
+    # —— 4) 产品材质/颜色（疑似）——
+    # 2026-11-12 复测：旧逻辑把 F 复合色拆成单字（深紫红→红/紫、银色→银），
+    # 正文正常出现的红/蓝/紫/白/银全被判冲突，每段刷 6 条假警告。
+    # 新逻辑：① 从 F 解析真实颜色短语；② 只在正文对产品上下文「显式断言一个不同的 X色」时才报；
+    #         ③ 排除打光/环境词（冷白主光、暖光…），避免把光当颜色。
     f_part = _parse_fixed_field(fixed, "产品拆件") or _parse_fixed_field(fixed, "产品")
     MAT = ["玻璃", "陶瓷", "塑料", "金属", "不锈钢", "纸", "木质", "亚克力", "硅胶"]
-    COL = ["红", "蓝", "绿", "黄", "白", "黑", "金", "银", "透明", "粉", "紫", "橙"]
-    PROD_NOUN = ["瓶", "杯", "罐", "盒", "袋", "包装", "饮品", "后生元"]
+    COL_BASE = ["红", "蓝", "绿", "黄", "白", "黑", "金", "银", "紫", "橙", "粉", "灰", "青", "棕"]
+    PROD_NOUN = ["瓶", "杯", "罐", "盒", "袋", "包装", "饮品", "后生元", "液体"]
     if f_part:
+        f_color_phrases = _extract_color_phrases(f_part)
+        f_color_chars = set()
+        for ph in f_color_phrases:
+            f_color_chars.update(ph)
+        # 材质：材质词本就是明确名词，邻近产品名词即视为冲突（误报少，保留原判定）。
         f_mats = [x for x in MAT if x in f_part]
-        f_cols = [x for x in COL if x in f_part]
         for mat in f_mats:
             for opp in MAT:
-                if opp != mat and opp in body and _near_product(body, opp, PROD_NOUN):
+                if opp != mat and _near_product(body, opp, PROD_NOUN):
                     issues.append(f"疑似产品材质冲突：正文出现「{opp}」材质，与固定块锁定的「{mat}」不一致")
                     break
-        for col in f_cols:
-            for opp in COL:
-                if opp != col and opp in body and _near_product(body, opp, PROD_NOUN):
-                    issues.append(f"疑似产品颜色冲突：正文出现「{opp}」色，与固定块锁定的「{col}」不一致")
-                    break
+        # 颜色：只在正文显式断言「X色」且贴近产品、且非打光词时才报。
+        for opp_char in COL_BASE:
+            if opp_char in f_color_chars:
+                continue
+            if _explicit_color_conflict(body, opp_char, PROD_NOUN):
+                issues.append(f"疑似产品颜色冲突：正文出现「{opp_char}色」的产品外观，与固定块锁定的颜色不一致")
+                break
     return issues
 
 
