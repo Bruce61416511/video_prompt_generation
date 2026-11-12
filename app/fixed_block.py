@@ -405,6 +405,19 @@ def _explicit_color_conflict(text: str, opp_char: str, nouns: list[str]) -> bool
     return False
 
 
+_NEG_RE = re.compile(r"(无|不|没|禁止|避免)\s*(同期|口播|画外音|旁白)")
+
+
+def _mode_word(f_voice: str, word: str) -> bool:
+    """F 旁白里是否「真正要求」某声音词（排除「无同期声」「不画外音」等否定式）。"""
+    for m in re.finditer(word, f_voice or ""):
+        before = (f_voice or "")[max(0, m.start() - 2): m.start()]
+        if any(neg in before for neg in ("无", "不", "没")):
+            continue
+        return True
+    return False
+
+
 def check_body_vs_fixed(body: str, fixed: str) -> list[str]:
     """正文 vs 固定块 F 的运行时冲突检测（问题②）。
 
@@ -441,18 +454,22 @@ def check_body_vs_fixed(body: str, fixed: str) -> list[str]:
             issues.append("画幅冲突：正文写「竖屏」，与固定块锁定的横屏不一致")
 
     # —— 2) 声音/旁白 ——
+    # 注意：F 旁白里常写「无同期声」「无画外音」这类否定式，必须识别否定词，
+    # 否则「无同期声」会被误读成要求同期声、把画外音正文错判成冲突（2026-11-12 复测）。
     f_voice = _parse_fixed_field(fixed, "旁白方式")
     if f_voice:
-        voff = ("画外音" in f_voice or "旁白" in f_voice) and not ("同期" in f_voice or "口播" in f_voice)
-        von = ("同期" in f_voice or "口播" in f_voice) and not voff
-        vsilent = not (voff or von) and any(k in f_voice for k in ("无台词", "纯环境", "ASMR", "静音", "无声", "无对白"))
+        has_tongqi = _mode_word(f_voice, "同期") or _mode_word(f_voice, "口播")
+        has_huawai = _mode_word(f_voice, "画外音") or _mode_word(f_voice, "旁白")
+        vsilent = not (has_tongqi or has_huawai) and any(
+            k in f_voice for k in ("无台词", "纯环境", "ASMR", "静音", "无声", "无对白")
+        )
         if vsilent:
             if any(k in body for k in ("台词", "口播", "旁白", "说话")):
                 issues.append("声音冲突：固定块要求无台词/纯环境，正文却出现台词或口播")
-        elif von:
+        elif has_tongqi and not has_huawai:
             if "画外音" in body or "voiceover" in body.lower() or "画外" in body:
                 issues.append("声音冲突：固定块要求同期声口播（画面有说话人），正文却出现画外音")
-        elif voff:
+        elif has_huawai and not has_tongqi:
             if "同期声" in body or "对镜头说" in body or "口型" in body:
                 issues.append("声音冲突：固定块要求画外音旁白（画面无说话人），正文却出现同期声/口型")
 
