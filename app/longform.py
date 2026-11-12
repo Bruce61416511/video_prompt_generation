@@ -751,11 +751,6 @@ def render_segment(kind: str, seg: dict, all_segs: list[dict], setting: dict) ->
         "杯", "试饮", "液体", "倒出", "倒入", "饮料", "瓶身", "展示", "陈列", "拿",
         "端", "捧", "握", "倒", "递", "接",
     )
-    # 纯人物动作词（段里只有人在说话/操作、完全没提产品）→ 产品大概率不出镜。
-    PERSON_ACTION_KW = (
-        "她", "他", "营养师", "工人", "研究员", "讲解", "演示", "口播", "对镜头",
-        "说话", "主播", "男主", "女主", "主持", "操作", "端", "拿",
-    )
     # 真正的「无产品」上下文：微观/抽象示意，产品本就不该出现。
     NO_PROD_CTX = (
         "空镜", "微观", "肠道", "菌群", "细胞", "分子", "机理", "结构示意",
@@ -772,17 +767,14 @@ def render_segment(kind: str, seg: dict, all_segs: list[dict], setting: dict) ->
 
     prod_on = _has_any(lens_text, PROD_KW)
     if f_prod:
-        # F 声明了产品：微观/抽象示意段（菌群特写、肠道微观…）产品本就不该出镜，
-        # 必须先强制 False，否则「特写」等关键词会把微观段误判成产品出镜。
+        # F 声明了产品：微观/抽象示意段（菌群特写、肠道微观、结构示意…）产品本就不该出镜，
+        # 强制 False，否则「特写」等关键词会把微观段误判成产品出镜。
+        # 其余段一律默认「出镜」—— 2026-11-12 复测发现：科普片把蓝莓/紫甘蓝当产品，
+        # 段正文已出现这些食材，但「纯口播」判断 + 关键词漏掉果蔬，导致配置说「不出镜」、
+        # 正文却出现产品，与 F 自相矛盾。宁可让纯口播段也默认出镜（至多过度声明，不矛盾），
+        # 也不要配置与正文打架。
         no_prod_ctx = _has_any(lens_text, NO_PROD_CTX)
-        if no_prod_ctx:
-            prod_on = False
-        else:
-            # 其余段：除非纯人物口播（人在说话/操作、完全没提产品），否则默认产品出镜，
-            # 避免「配置说产品不出镜、正文却出现产品」与 F 自相矛盾（2026-11-12 实测）。
-            person_only = _has_any(lens_text, PERSON_ACTION_KW) and not _has_any(lens_text, PROD_KW)
-            if not person_only:
-                prod_on = True
+        prod_on = not no_prod_ctx
 
     # 产品是否被人物手持/端起/倾倒：决定镜头必须露出手，否则易出「悬浮瓶」（问题①）。
     prod_held = _has_any(
