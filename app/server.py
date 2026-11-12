@@ -48,6 +48,7 @@ from .longform import (
 from .fixed_block import (
     body_instruction,
     build_fixed_block,
+    build_seg_anchors,
     prepare_delivery,
     strip_fixed_block,
     validate_setting,
@@ -308,7 +309,8 @@ def longform_prompt(req: LongPromptRequest):
                 "hero": s.get("hero", ""),
                 "hero_cn": s.get("hero_cn", ""),
                 "skills": s.get("skills", []),
-                "text": body_instruction() + "\n\n" + body,
+                "text": (body_instruction() + "\n\n"
+                         + build_seg_anchors(setting, kind) + "\n\n" + body),
             }
         )
     return {
