@@ -2155,7 +2155,9 @@ function lfSettingFields(){
       <div class="lfsum" style="margin:-2px 0 5px">别只写「全片统一」—— 那是空话，模型会每段自己编声音，点输入框可选用建议值</div>`;
   return f('产品','主题里推断不出就自己填') + f('拆件','外观拆解：材质/颜色/开关方式/内容物') +
          fr + f('画风','一句话定全片视觉风格') + f('主角','出镜人物：年龄/性别/穿着；没有真人可留空') +
-         f('不变项','全片复用的场景与光线锚点') + f('红线','合规护栏') +
+         f('不变项','全片复用的场景与光线锚点') +
+         f('道具','跨段反复出现的道具+外观，例：试饮杯＝透明直筒玻璃杯 250ml／发酵罐＝银色不锈钢圆柱罐；没有可留空') +
+         f('红线','合规护栏') +
          voice + advanced;
 }
 
@@ -2250,7 +2252,7 @@ async function lfAssign(btn){
   const empty = LF.segs.filter(s=>!(s.content||'').trim());
   if(empty.length){ toast('有 ' + empty.length + ' 段还没写内容'); return; }
   const setting = {};
-  ['产品','拆件','画幅','画风','主角','不变项','红线',
+  ['产品','拆件','画幅','画风','主角','不变项','道具','红线',
    '旁白','音色','字幕音乐','负面词','镜头光线','参考图'].forEach(k=>{
     const el = document.getElementById('lfs_' + k);
     if(el) setting[k] = el.value.trim();

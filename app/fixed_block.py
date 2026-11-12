@@ -29,6 +29,10 @@ FIXED_FIELDS = (
     ("出镜人", "主角", "全片同一人必须同一张脸、同一身衣着", True),
     ("合规红线", "红线", "", False),
     ("不变项", "不变项", "全程锁定，不许中途更换", True),
+    # 2026-11-12 问题④：跨段道具无锚点。拆段模型会自加道具（杯子/发酵罐/果篮），
+    # 每段各写各的外观 → 段 2 玻璃杯、段 5 陶瓷杯，剪起来接不上。
+    # 解法和产品/主角同款：设定卡填一次（模型也会提议），F 与 A 都渲染。
+    ("道具", "道具", "全片同一套道具，样式不许中途换", False),
     ("旁白方式", "旁白", "全片统一，不许这一段开口、下一段静音", True),
     ("音色语速", "音色", "", False),
     ("字幕与音乐", "字幕音乐", "", False),
@@ -39,7 +43,7 @@ FIXED_FIELDS = (
 
 REQUIRED_LABELS = tuple(label for label, _k, _c, req in FIXED_FIELDS if req)
 # 选填且留空就不进 F，避免交付稿里堆一排「（未填写）」。
-OPTIONAL_SKIP_KEYS = frozenset({"音色", "字幕音乐", "负面词", "镜头光线", "参考图"})
+OPTIONAL_SKIP_KEYS = frozenset({"道具", "音色", "字幕音乐", "负面词", "镜头光线", "参考图"})
 
 DEFAULT_FRAME = {"brand": "16:9 横屏", "kepu": "9:16 竖屏"}
 DEFAULT_REDLINE = {
@@ -70,7 +74,10 @@ BODY_INSTRUCTION = (
     "正文里不要出现任何外部链接、案例名或案例引用（goodcase.ai 等网址）—— "
     "案例只用来学写法，网址写进交付稿会被清洗掉。\n"
     "下面的「本片锚点」是全片统一的事实：写画面和台词必须严格照用，"
-    "产品外观、人物长相、声音规矩都不许自己另编；但不要把锚点那几行原样抄进正文。\n"
+    "产品外观、人物长相、道具样式、声音规矩都不许自己另编；但不要把锚点那几行原样抄进正文。\n"
+    "道具样式以锚点列的清单为准：清单里有的必须照写，"
+    "不许这一段写玻璃杯、下一段写陶瓷杯；清单外的一次性道具只写通用样式，"
+    "不给材质特写、不要反复出现。\n"
     "不要复述全片设定块（固定块、产品/人物锁定、合规红线、不变项、参考图清单）"
     "—— 这些由系统统一注入交付稿，正文里重复写会被清洗掉。\n"
     "画幅以「本片锚点」给的比例为唯一标准：正文里若提到比例，只能写这个比例，"
@@ -170,6 +177,13 @@ def build_seg_anchors(setting: dict, kind: str = "brand") -> str:
         lines.append(f"画风：{v('画风')}")
     if v("不变项"):
         lines.append(f"场景与光线：{v('不变项')}")
+    # 问题④：道具与产品/主角同机制 —— 拆段模型自加的道具收进这一行统一锚定。
+    if v("道具"):
+        lines.append(
+            f"道具（全片唯一）：{v('道具')} —— 画面里出现这些道具时，"
+            "材质/颜色/形状必须与此处一致，不许自己另编；"
+            "清单外的道具只作一次性背景，写通用样式、不给特写"
+        )
     voice = f"声音规矩（全片统一，每段照此写）：{v('旁白')}"
     if v("音色"):
         voice += f"；音色语速：{v('音色')}"
@@ -210,10 +224,11 @@ _LOCK_HEAD_RE = re.compile(
     r")\s*$"
 )
 # 模型把「本片锚点」原样抄进正文时清掉。也兼容标题后面跟内容的同行写法。
+# 2026-11-12 加道具行后锚点最多 12 行，留 2 行余量。
 _ANCHOR_HEAD_RE = re.compile(
     r"^\s*(?:——[^—\n]*本片锚点|【[^】\n]*本片锚点|\*\*[^*]*本片锚点)"
 )
-ANCHOR_SKIP_LINES = 12
+ANCHOR_SKIP_LINES = 14
 LOCK_SKIP_LINES = 6
 
 # 整行代码围栏（``` / ```text）：模型偶尔把正文整段包进围栏，标记行本身没有内容。
@@ -283,9 +298,12 @@ def clean_model_output(text: str) -> tuple[str, list[str], list[str]]:
             limit = ANCHOR_SKIP_LINES if is_anchor else LOCK_SKIP_LINES
             continue
         if skipping:
+            # 停止条件：空行 / 行数上限 / 新标题 / 时间码正文标题（**[00:00-…** ——
+            # 模型把锚点块与正文连着写（中间没空行）时，靠这一条保住正文，
+            # 否则 12 行锚点 + 若干正文行会被连着吃掉，2026-11-12 实测清洗成空串）
             if (not s or dropped_n >= limit or _LOCK_HEAD_RE.match(s)
                     or _ANCHOR_HEAD_RE.match(s)
-                    or s.startswith(("【", "#", "——", "```"))):
+                    or s.startswith(("【", "#", "——", "```", "**["))):
                 skipping = False
                 if s:
                     out.append(line)
@@ -296,7 +314,9 @@ def clean_model_output(text: str) -> tuple[str, list[str], list[str]]:
     removed = dropped + removed
     cleaned = "\n".join(out).strip()
     issues = []
-    if cleaned and len(cleaned) < len(raw) * 0.3:
+    # 保护回滚：清洗量过大就保留原文。原写法「if cleaned and …」在清洗成空串时
+    # 会跳过判断、静默交出空稿 —— 空串必须也触发回滚。
+    if len(cleaned) < len(raw) * 0.3:
         issues.append("清洗会删掉过多正文，已保留原文（可能仍含模型自创的锁定段）")
         return raw, removed, issues
     return cleaned, removed, issues
