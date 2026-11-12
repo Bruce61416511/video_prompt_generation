@@ -1106,7 +1106,7 @@ async function realSend(text, el, skills){
         <b style="color:var(--warn)">⚠ 时间码校验</b>：本次只报不改，未改动任何数字
         ${tmFixed ? `（历史修正记录 ${tmFixed} 处）` : ''}
         ${tmIss.length   ? `<div style="margin-top:4px">待核对：${escapeHtml(tmIss.map(x => x.text || x).join('；'))}</div>` : ''}
-        ${tmNotes.length ? `<div style="margin-top:4px">${tmNotes.map(n => '· ' + escapeHtml(n)).join('<br>')}</div>` : ''}
+        ${tmNotes.length ? `<div style="margin-top:4px">${tmNotes.slice(0, 3).map(n => '· ' + escapeHtml(n)).join('<br>')}${tmNotes.length > 3 ? `<div style="margin-top:3px;color:var(--dim)">…另有 ${tmNotes.length - 3} 条逐段容量估算提示已折叠</div>` : ''}</div>` : ''}
       </div>`;
     }
 

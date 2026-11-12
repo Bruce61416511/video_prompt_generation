@@ -776,6 +776,40 @@ def render_segment(kind: str, seg: dict, all_segs: list[dict], setting: dict) ->
         no_prod_ctx = _has_any(lens_text, NO_PROD_CTX)
         prod_on = not no_prod_ctx
 
+    # 2026-11-13 P1-2：open/close 接缝锚点是模型按故事线写出来的。若锚点明确
+    # 安排了产品/人物入画，而上面机械判定说「不出镜/不入画」，模型会同时收到
+    # 两套相反指令（实测科普4段：配置写「真人不出画／产品不出镜」，close 却要
+    # 「那杯发酵饮品被推入画面中央」，正文跟了锚点 → 配置与正文打架）。
+    # 以锚点为权威校正配置：只改本段配置行，不改锚点文字、不改模型正文。
+    ANCHOR_PERSON_KW = (
+        "营养师", "女主", "男主", "工人", "研究员", "外星人", "她", "他",
+        "手", "人脸", "镜头前", "对镜头", "人物",
+    )
+    ANCHOR_PROD_KW = (
+        "瓶", "袋", "包装", "饮品", "产品", "后生元", "软袋", "自立袋",
+        "试饮杯", "玻璃杯", "吸嘴", "拧盖",
+    )
+    ANCHOR_NEG = ("不出现", "不得出现", "禁止", "不要", "不得", "不拍", "只拍装置", "无人")
+
+    def _anchor_requires(kws):
+        anchor_text = str(seg.get("open") or "") + "\n" + str(seg.get("close") or "")
+        for ln in anchor_text.splitlines():
+            s = ln.strip()
+            if not s or any(n in s for n in ANCHOR_NEG):
+                continue
+            if _has_any(s, kws):
+                return True
+        return False
+
+    corrections = []
+    anchor_person_fixed = False
+    if not person_on and _anchor_requires(ANCHOR_PERSON_KW):
+        person_on, anchor_person_fixed = True, True
+        corrections.append("开场/结尾锚点安排了人物或手部入画")
+    if not prod_on and _anchor_requires(ANCHOR_PROD_KW):
+        prod_on = True
+        corrections.append("开场/结尾锚点安排了产品入画")
+
     # 产品是否被人物手持/端起/倾倒：决定镜头必须露出手，否则易出「悬浮瓶」（问题①）。
     prod_held = _has_any(
         lens_text,
@@ -799,6 +833,9 @@ def render_segment(kind: str, seg: dict, all_segs: list[dict], setting: dict) ->
         lines.append("本段真人是否入画：是 —— 按「本片锚点」里的出镜人外观入画，必须同一张脸同一身衣着")
     else:
         lines.append("本段真人是否入画：否 —— 「本片锚点」里设定的人不入画，只拍装置／产品／空镜，也不要临时加别的人或人手")
+    if corrections:
+        lines.append("本段配置校正（以开场/结尾锚点为准）：" + "；".join(corrections)
+                     + " —— 以上出镜判定已同步，本段不要再写「不得出现」。")
     # 问题①：出入画判定与镜头逻辑联动，杜绝「悬浮瓶 / 反物理穿帮」。
     reconcile = []
     if person_on and prod_held:
@@ -806,7 +843,9 @@ def render_segment(kind: str, seg: dict, all_segs: list[dict], setting: dict) ->
             "真人入画且本段涉及手持/端起/倾倒/拿起产品：镜头必须露出该人物持握产品的手/手臂，"
             "禁止产品脱离人体自行漂浮、自行倾斜、凭空升起或独自运动（Seedance 常见穿帮）。"
         )
-    if person_on:
+    # 锚点已明确要人物入画的段，不再挂「若镜头逻辑是空镜则作废」这条，
+    # 否则又会把刚校正好的判定推翻（P1-2）。
+    if person_on and not anchor_person_fixed:
         reconcile.append(
             "若本段「镜头逻辑」写的是产品特写/空镜、并未安排人物入画，则以上「真人入画」判定作废，"
             "改按「产品出镜、真人不出画」处理：只拍装置/产品，绝不临时加人手。"
@@ -845,6 +884,16 @@ def render_segment(kind: str, seg: dict, all_segs: list[dict], setting: dict) ->
         if key in ("不变项", "产品拆件"):
             continue
         label, default, _t = BLOCKS[key]
+        if key == "画风锁定":
+            # 2026-11-13 P1-1：原默认值硬编码「写实微观特效（不混 3D 卡通）」，
+            # 科普片设定卡锁 3D 时，模型把示例当规则照抄 → 一句里两种画风打架。
+            # 这里不写任何具体风格：全片画风由设定卡/F 决定，代码不替用户拍板
+            # 「3D 卡通 vs 写实微观」，用户在设定卡里选哪个，正文就只能是哪个。
+            lines.append(
+                f"{label}：全片画风以「本片锚点」为准，本段不另写画风；"
+                "只按该风格写画面，不混用另一种、不中途切换"
+            )
+            continue
         lines.append(f"{label}：【{default}】")
 
     lines.append("")

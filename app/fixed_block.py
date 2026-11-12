@@ -349,23 +349,71 @@ def verify(delivery: str, fixed: str) -> list[str]:
 
 _RATIO_RE = re.compile(r"(\d+)\s*[:：]\s*(\d+)")
 
+# P2-1（2026-11-13）：真正会被当画幅用的比例只有这几种。
+# 旧逻辑见到任意 N:M 就报，结果「从 00:12 起进入」被当成比例 00:12，
+# 与 F 锁的 16:9 判成画幅冲突 —— 每段一条假 HARD。
+_KNOWN_RATIOS = frozenset({"9:16", "16:9", "1:1", "4:3", "3:4", "2:1", "1:2", "21:9"})
+
+# 画风否定式：正文写「不写成写实照片风格」「非动画」「不混 3D 卡通」时，
+# 那个风格词其实是在遵守 F，不能反过来判成冲突。
+_STYLE_NEG = ("不写成", "不混", "不是", "不要", "不用", "不采用", "不得", "不许",
+              "不能", "非", "避免", "禁止", "杜绝", "拒绝", "不出现", "别")
+
+
+def _style_conflict(body: str, opp: str) -> bool:
+    """body 里是否『正向断言』了 opp 风格（排除否定式语境）。"""
+    for m in re.finditer(re.escape(opp), body or ""):
+        before = (body or "")[max(0, m.start() - 10): m.start()]
+        if any(n in before for n in _STYLE_NEG):
+            continue
+        return True
+    return False
+
+
+_VOICE_NEG = ("不出现", "不得", "禁止", "不要", "不许", "无", "没", "避免")
+
+
+def _positive_voice_signal(body: str, words) -> bool:
+    """正文是否正向出现某声音信号（「不出现口型」这类否定行不算）。"""
+    for ln in (body or "").splitlines():
+        if any(n in ln for n in _VOICE_NEG):
+            continue
+        if any(w in ln for w in words):
+            return True
+    return False
+
+
+# 材质/颜色归属：只有「产品本体」附近的词才算产品外观。
+# 发酵罐 / 观察窗 / 旋盖 / 操作台是道具，连体服 / 皮肤 / 眼睛是出镜人，
+# 旧逻辑靠「±6 字内有瓶/罐/袋」把这两类全误判成产品（9 条报警 8 条假）。
+PROD_BODY_NOUN = ("瓶身", "软袋", "自立袋", "袋身", "包装", "饮品",
+                  "后生元", "吸嘴", "产品", "瓶", "袋", "杯")
+_PERSON_ATTR = ("外套", "连体服", "皮肤", "眼睛", "头发", "衬衫",
+               "脸", "衣", "帽", "围裙", "人物")
+
 
 def _parse_fixed_field(fixed: str, label: str) -> str:
-    """从 F 字符串取「标签：值」（值取到行尾或「 —— 」约束语之前）。"""
+    """从 F 字符串取「标签：值」（兼容「标签（说明）：值」，如「道具（全片唯一）：」）。"""
     for line in (fixed or "").splitlines():
         s = line.strip()
-        if s.startswith(label + "：") or s.startswith(label + ":"):
-            rest = s[len(label) + 1:].strip()
-            rest = rest.split(" —— ")[0].split(" - ")[0]
-            return rest
+        m = re.match(r"^" + re.escape(label) + r"(?:（[^）]*）)?\s*[:：]", s)
+        if not m:
+            continue
+        rest = s[m.end():].strip()
+        rest = rest.split(" —— ")[0].split(" - ")[0]
+        return rest
     return ""
 
 
 def _near_product(text: str, word: str, nouns: list[str]) -> bool:
-    """word 是否出现在某个产品名词的紧邻窗口内（约 6 字），避免泛色/泛材质词误报。"""
+    """word 是否紧贴某个产品本体名词（材质/颜色短语内部）。
+
+    窗口刻意收得很窄（前 3 字 / 后 5 字）：宽窗口会把「试饮杯，旁边不锈钢
+    发酵罐」里的「杯」算进「不锈钢」的上下文，把道具误判成产品。
+    """
     idx = text.find(word)
     while idx != -1:
-        window = text[max(0, idx - 6): idx + 6]
+        window = text[max(0, idx - 3): idx + len(word) + 5]
         if any(n in window for n in nouns):
             return True
         idx = text.find(word, idx + 1)
@@ -399,6 +447,8 @@ def _explicit_color_conflict(text: str, opp_char: str, nouns: list[str]) -> bool
         s, e = m.start(), m.end()
         window = (text or "")[max(0, s - 12): e + 12]
         if any(lw in window for lw in _LIGHT_WORDS):
+            continue
+        if any(p in window for p in _PERSON_ATTR):
             continue
         if any(n in window for n in nouns):
             return True
@@ -445,6 +495,8 @@ def check_body_vs_fixed(body: str, fixed: str) -> list[str]:
             if a == "-" or b == "-":
                 continue
             r = f"{mm.group(1)}:{mm.group(2)}"
+            if r not in _KNOWN_RATIOS:
+                continue          # 00:12 / 12:30 是时间码或时刻，不是画幅比例
             if f_ratio and r != f_ratio:
                 issues.append(f"画幅冲突：正文出现比例 {r}，与固定块锁定的 {f_ratio} 不一致")
                 break
@@ -467,10 +519,10 @@ def check_body_vs_fixed(body: str, fixed: str) -> list[str]:
             if any(k in body for k in ("台词", "口播", "旁白", "说话")):
                 issues.append("声音冲突：固定块要求无台词/纯环境，正文却出现台词或口播")
         elif has_tongqi and not has_huawai:
-            if "画外音" in body or "voiceover" in body.lower() or "画外" in body:
+            if ("画外音" in body or "voiceover" in body.lower() or "画外" in body):
                 issues.append("声音冲突：固定块要求同期声口播（画面有说话人），正文却出现画外音")
         elif has_huawai and not has_tongqi:
-            if "同期声" in body or "对镜头说" in body or "口型" in body:
+            if _positive_voice_signal(body, ("同期声", "对镜头说", "口型")):
                 issues.append("声音冲突：固定块要求画外音旁白（画面无说话人），正文却出现同期声/口型")
 
     # —— 3) 画风（疑似：关键词反向）——
@@ -485,7 +537,7 @@ def check_body_vs_fixed(body: str, fixed: str) -> list[str]:
         for base, oppos in STYLE_PAIRS:
             if base in f_style:
                 for opp in oppos:
-                    if opp in body:
+                    if _style_conflict(body, opp):
                         issues.append(f"疑似画风冲突：正文出现「{opp}」，与固定块锁定的「{base}」画风不一致")
                         break
                 break
@@ -496,26 +548,32 @@ def check_body_vs_fixed(body: str, fixed: str) -> list[str]:
     # 新逻辑：① 从 F 解析真实颜色短语；② 只在正文对产品上下文「显式断言一个不同的 X色」时才报；
     #         ③ 排除打光/环境词（冷白主光、暖光…），避免把光当颜色。
     f_part = _parse_fixed_field(fixed, "产品拆件") or _parse_fixed_field(fixed, "产品")
+    # F 的「道具」行里也写了合法材质（透明玻璃试饮杯、不锈钢发酵罐…）。
+    # 只拿产品拆件判互斥会把这些道具当成「另编的材质」误报（2026-11-13 brand3）。
+    f_tools = _parse_fixed_field(fixed, "道具")
+    f_all = f_part + " " + f_tools
     MAT = ["玻璃", "陶瓷", "塑料", "金属", "不锈钢", "纸", "木质", "亚克力", "硅胶"]
     COL_BASE = ["红", "蓝", "绿", "黄", "白", "黑", "金", "银", "紫", "橙", "粉", "灰", "青", "棕"]
-    PROD_NOUN = ["瓶", "杯", "罐", "盒", "袋", "包装", "饮品", "后生元", "液体"]
     if f_part:
         f_color_phrases = _extract_color_phrases(f_part)
         f_color_chars = set()
         for ph in f_color_phrases:
             f_color_chars.update(ph)
-        # 材质：材质词本就是明确名词，邻近产品名词即视为冲突（误报少，保留原判定）。
-        f_mats = [x for x in MAT if x in f_part]
-        for mat in f_mats:
+        # 材质互斥只在 F 只锁了一种材质时才判：F 常同时写「透明玻璃试饮杯 +
+        # 银色金属旋盖」，两者都是同一产品的合法部件，旧逻辑把它们当互斥，
+        # 刷出「玻璃 vs 金属」「金属 vs 玻璃」两条假报警（P2-1）。
+        f_mats = [x for x in MAT if x in f_all]
+        if len(f_mats) == 1:
+            mat = f_mats[0]
             for opp in MAT:
-                if opp != mat and _near_product(body, opp, PROD_NOUN):
+                if opp != mat and _near_product(body, opp, PROD_BODY_NOUN):
                     issues.append(f"疑似产品材质冲突：正文出现「{opp}」材质，与固定块锁定的「{mat}」不一致")
                     break
-        # 颜色：只在正文显式断言「X色」且贴近产品、且非打光词时才报。
+        # 颜色：只在正文显式断言「X色」且贴近产品本体、且非打光/人物外观时才报。
         for opp_char in COL_BASE:
             if opp_char in f_color_chars:
                 continue
-            if _explicit_color_conflict(body, opp_char, PROD_NOUN):
+            if _explicit_color_conflict(body, opp_char, PROD_BODY_NOUN):
                 issues.append(f"疑似产品颜色冲突：正文出现「{opp_char}色」的产品外观，与固定块锁定的颜色不一致")
                 break
     return issues

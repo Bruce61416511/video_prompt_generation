@@ -107,6 +107,15 @@ _TIME_RANGE = re.compile(
     r"([\[【])\s*(\d{1,3})\s*[:：]\s*(\d{1,2})\s*([-–—~～至])\s*(\d{1,3})\s*[:：]\s*(\d{1,2})\s*([\]】])"
 )
 
+# P1-4（2026-11-13）：模型有时把时间码写成「0-3秒：」「第 3-6 秒，」这类松散格式。
+# 旧解析器只认 [mm:ss-mm:ss]，于是这些稿的时间码校验整段跳过 —— P0 刚建好的
+# 只报不改闸门对半数稿形同虚设。这里只读解析、不改稿（E=1），让数值校验继续生效。
+# 严格限定「行首 + 数字-数字 + 秒 + 分隔符」，避免把「第 8-12 秒那一拍」当时间码。
+_LOOSE_RANGE = re.compile(
+    r"^[ \t]*(?:第\s*)?(\d{1,3})\s*[-–—~～]\s*(\d{1,3})\s*秒\s*[:：，,、]",
+    re.M,
+)
+
 
 def _scan_timecodes(text: str) -> list[dict]:
     """扫出所有时间区间写法的毛病。[00:09-0:18] → 给出 [00:09-00:18]。"""
@@ -172,10 +181,27 @@ _TOTAL_RE = re.compile(
 )
 
 
+# 「人声只出现在 [00:20-00:26] 一段」这类是行内引用，不是分镜格。
+# 旧解析器把它算成第一段时间码，导致「首段从 20 秒起」「段间重叠 26 秒」的假报警
+# （2026-11-13 t3 实测）。只按明确的引用词过滤，短前缀（如「片段一」）仍算分镜格。
+_REF_PREFIX_KW = ("只出现在", "出现在", "见第", "参考", "例如", "人声",
+                  "该段", "这一段", "同上", "重复", "同一段")
+
+
+def _inline_timecode_reference(text: str, start: int) -> bool:
+    ls = text.rfind("\n", 0, start) + 1
+    prefix = text[ls:start].strip()
+    if len(prefix) <= 3:
+        return False
+    return any(k in prefix[-14:] for k in _REF_PREFIX_KW)
+
+
 def _timing_segments(text: str) -> list[dict]:
     """把稿子里的时间码解析成秒。格式已由 _fix_timecodes 统一，这里只取数值。"""
     out: list[dict] = []
     for m in _TIME_RANGE.finditer(text or ""):
+        if _inline_timecode_reference(text or "", m.start()):
+            continue
         _lb, m1, s1, _sep, m2, s2, _rb = m.groups()
         mm1, ss1, mm2, ss2 = int(m1), int(s1), int(m2), int(s2)
         # 沿用 _scan_timecodes 的保护：分/秒 > 59 当普通文字，不参与判定
@@ -186,6 +212,17 @@ def _timing_segments(text: str) -> list[dict]:
             "raw": m.group(0), "pos": m.span(),
             "start": start, "end": end, "dur": end - start,
         })
+    if not out:
+        # 完全没有标准时间码时，退而解析松散写法（只解析、不改写稿子）。
+        # 两种写法混用时以标准时间码为准，避免同一段被数两遍。
+        for m in _LOOSE_RANGE.finditer(text or ""):
+            a, b = int(m.group(1)), int(m.group(2))
+            if not (0 <= a < b <= 300 and b - a <= 60):
+                continue
+            out.append({
+                "raw": m.group(0).strip(), "pos": m.span(),
+                "start": a, "end": b, "dur": b - a, "loose": True,
+            })
     return out
 
 
@@ -418,6 +455,12 @@ def _fix_timing_impl(text: str, user_input: str = "") -> tuple[str, dict]:
 
     report["checked"] = True
     report["segments"] = len(segs)
+    loose = [s for s in segs if s.get("loose")]
+    if loose:
+        report["notes"].append(
+            f"本条有 {len(loose)} 处松散时间码写法（如「{loose[0]['raw']}」）；数值已按秒校验，"
+            "但建议改成 [mm:ss-mm:ss] 标准格式，豆包更容易解析。"
+        )
     total, source, meta = _resolve_total(text, user_input, segs)
     report["total"], report["total_source"] = total, source
     report["low_confidence"] = meta["low_confidence"]
@@ -945,6 +988,8 @@ class Agent:
                 "禁止写 markdown 标题（# 或 ## 开头）、禁止写「锚定案例／案例链接／"
                 "时长说明／验收清单／生成后必查」等标签、禁止出现任何 URL、"
                 "禁止用 ``` 代码围栏把正文包起来、禁止在正文后附检查清单或分隔线。"
+                "时间码一律写成 [00:00-00:03] 这种 [mm:ss-mm:ss] 格式，每段一格、首尾相接，"
+                "不要写成「0-3秒」或「第 0-3 秒」。"
                 "注意：【全局约束】【负面清单】等本段画面负面词属于提示词正文，必须保留。"
             )
 

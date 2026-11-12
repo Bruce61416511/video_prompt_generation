@@ -125,6 +125,33 @@ def llm_extract(body: str, hint: str | None, client, model: str) -> dict:
 
 # ---------------------------------------------------------------- 套模板
 
+# P1-3（2026-11-13）：模型抽槽常把产品名抽坏 —— t4 抽成「一袋」、t2 抽成
+# 「蓝莓后生元饮品」（丢了品牌）。模板里产品名一错，成稿就会丢品牌名，
+# 系统的事后 product fix 也不一定救得回来。这里在套模板前统一兜底。
+_BRAND = "百芙乐"
+_PRODUCT_HINT = ("后生元", "蓝莓", "饮品", "软袋", "自立袋", "饮料", "发酵", "果汁")
+_ALIEN_HINT = ("别的", "其他", "竞品", "另一", "对面", "别家", "某品牌", "对比物")
+_JUNK_PRODUCT = frozenset({
+    "一袋", "这袋", "那袋", "一包", "一瓶", "它", "这个", "那个", "产品", "饮品",
+    "一个", "一盒", "袋", "瓶",
+})
+
+
+def _safe_product(val: str | None) -> str:
+    """把抽出来的产品槽规范成完整产品名；抽坏了就回落到 PROFILE 默认值。"""
+    default = str(PROFILE["产品"]).strip()
+    v = str(val or "").strip().strip("「」【】()（）:：")
+    if not v or v in _JUNK_PRODUCT or len(v) < 4:
+        return default
+    if _BRAND in v:
+        return v
+    if any(a in v for a in _ALIEN_HINT):
+        return default          # 「别的果汁」「其他品牌」不是自家产品，别补品牌前缀
+    if any(h in v for h in _PRODUCT_HINT):
+        return _BRAND + v
+    return default
+
+
 def _form_of(key: str) -> dict | None:
     """查骨架：只剩带货 t1~t8。"""
     return FORMS.get(key)
@@ -137,15 +164,15 @@ def fill_form(key: str, extracted: dict | None, src: str) -> tuple[str, list[str
         raise KeyError(f"未知的形式：{key}")
     extracted = extracted or {}
     ctx: dict[str, str] = {
-        "产品": PROFILE["产品"],
+        "产品": _safe_product(extracted.get("产品")),
         "拆件": PROFILE["拆件"],
         "合规": PROFILE["合规"],
     }
-    if str(extracted.get("产品") or "").strip():
-        ctx["产品"] = str(extracted["产品"]).strip()
 
     guessed: list[str] = []
     for name, default in f["slots"].items():
+        if name == "产品":          # 已由 _safe_product 统一兜底，不许被原始抽槽覆盖
+            continue
         val = str(extracted.get(name) or "").strip()
         if val:
             ctx[name] = val
@@ -188,6 +215,9 @@ def route(text: str, client=None, model: str = "") -> dict:
         form, source = hint, "rule"
 
     slots = data.get("slots") if isinstance(data.get("slots"), dict) else {}
+    if str(slots.get("产品") or "").strip():
+        slots = dict(slots)
+        slots["产品"] = _safe_product(slots["产品"])   # 前端展示与模板保持一致
 
     chosen_text, guessed = fill_form(form, slots, body)
     forms_list = []
