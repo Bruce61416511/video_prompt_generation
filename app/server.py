@@ -563,6 +563,9 @@ def _save_output(user_input: str, result: dict, delivery: str | None = None) -> 
     """把最终成稿存到 output/，返回文件路径；失败静默（不影响主流程）。
 
     长片传 delivery（固定块 + 本段正文），保证资料库存档与用户复制走的内容一致。
+    头三行固定为「> 标题 / > 技能 / > 时间」：长片的输入 message 以「—— 本段输出规则 ——」
+    开头且长达一两千字，若「> 技能」排在输入后面，资料库只读文件头 800 字就读不到技能，
+    列表标题也会显示成一串规则文字（2026-11-12 实测）。完整输入仍保留在「> 输入：」段。
     """
     try:
         rev = result.get("revision") or {}
@@ -577,9 +580,10 @@ def _save_output(user_input: str, result: dict, delivery: str | None = None) -> 
         # 导致每份成稿的「> 技能」恒为 "-"，提示词库里也查不到本次用了哪些技能。
         used = result.get("skills_used") or result.get("skills") or []
         header = (
-            f"> 输入：{user_input.strip()}\n"
+            f"> 标题：{slug}\n"
             f"> 技能：{', '.join(used) or '-'}\n"
             f"> 时间：{time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+            f"> 输入：{user_input.strip()}\n\n"
         )
         path.write_text(header + final, encoding="utf-8")
         return str(path)
@@ -618,16 +622,27 @@ def library_list():
         st = p.stat()
         head = ""
         try:
-            head = p.read_text(encoding="utf-8", errors="replace")[:800]
+            # 旧长片成稿的「> 技能」排在两千字的输入后面，800 字读不到 → 扩到 6000。
+            head = p.read_text(encoding="utf-8", errors="replace")[:6000]
         except Exception:
             pass
+        m_t = re.search(r"^>\s*标题：(.*)$", head, re.M)
         m_in = re.search(r"^>\s*输入：(.*)$", head, re.M)
         m_sk = re.search(r"^>\s*技能：(.*)$", head, re.M)
+        # 展示标题的取值链：新文件的「> 标题」→ 正文里的「品牌片·第 N 段」（旧长片
+        # 输入首行是「—— 本段输出规则 ——」，没有信息量）→「> 输入」首行（单条流程）。
+        title = (m_t.group(1).strip() if m_t else "")
+        if not title:
+            m_seg = re.search(r"(品牌片|科普片)·第\s*\d+\s*段／共\s*\d+\s*段[^\n]{0,24}", head)
+            if m_seg:
+                title = m_seg.group(0).strip()
+        if not title:
+            title = (m_in.group(1).strip() if m_in else "")
         items.append({
             "name": p.name,
             "size": st.st_size,
             "mtime": int(st.st_mtime),
-            "input": (m_in.group(1).strip() if m_in else ""),
+            "input": title,
             "skills": (m_sk.group(1).strip() if m_sk else ""),
         })
     return {"items": items, "total": len(items)}
