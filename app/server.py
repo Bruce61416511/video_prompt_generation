@@ -45,6 +45,13 @@ from .longform import (
     propose_setting,
     render_segment,
 )
+from .fixed_block import (
+    body_instruction,
+    build_fixed_block,
+    prepare_delivery,
+    strip_fixed_block,
+    validate_setting,
+)
 from .offer_forms import MAX_BASE, SKILL_MAP
 from .offer_router import route as route_offer
 from .skill_loader import SkillLoader
@@ -137,6 +144,9 @@ class ChatRequest(BaseModel):
     do_lint: bool = True                 # 是否跑质检
     history: list[dict] | None = None    # 多轮对话：之前的往来（role/content）
     last_skills: list[str] | None = None # 上一轮用过的技能，追问时兜底
+    # 长片专用：全片唯一一份固定块。它不进 message（模型看不到），
+    # 由后端在生成完成后拼进交付稿 delivery，并统一用于存档。
+    fixed_block: str | None = None
 
 
 class ConfigRequest(BaseModel):
@@ -269,17 +279,27 @@ def longform_assign(req: LongAssignRequest):
 
 @app.post("/api/longform/prompt")
 def longform_prompt(req: LongPromptRequest):
-    """步 3：逐段渲染填空模板（不调模型）。真正的提示词由前端调 /api/stream 生成。"""
+    """步 3：产出「全片固定块 F」+「逐段正文骨架」（不调模型）。
+
+    2026-11-12 彻底改 1/2：
+      - F 只在顶层返回一份，绝不塞进每段的 text；
+      - text 开头加一条输出规则，明确禁止模型再写全片级内容；
+      - strip_fixed_block 是防御：万一 longform.py 没同步，也能保证 F 不进模型输入；
+      - missing 是必填校验结果，前端据此拦截，不把「按主题自定」带进稿子。
+    """
     kind = req.kind if req.kind in SETTING_DEFAULTS else "brand"
     setting = _setting_of(req.setting, kind)
     segs = req.segments or []
     if not segs:
         raise HTTPException(400, "段表是空的")
+    fixed = build_fixed_block(setting, kind)
+    missing = validate_setting(setting)
     want = set(req.indexes or [s.get("i") for s in segs])
     out = []
     for s in segs:
         if s.get("i") not in want:
             continue
+        body = strip_fixed_block(render_segment(kind, s, segs, setting))
         out.append(
             {
                 "i": s.get("i"),
@@ -288,10 +308,15 @@ def longform_prompt(req: LongPromptRequest):
                 "hero": s.get("hero", ""),
                 "hero_cn": s.get("hero_cn", ""),
                 "skills": s.get("skills", []),
-                "text": render_segment(kind, s, segs, setting),
+                "text": body_instruction() + "\n\n" + body,
             }
         )
-    return {"kind": kind, "prompts": out}
+    return {
+        "kind": kind,
+        "fixed_block": fixed,
+        "missing": missing,
+        "prompts": out,
+    }
 
 
 # ---------------------------------------------------------------- 接口
@@ -499,16 +524,52 @@ def set_config(req: ConfigRequest):
 OUTPUT_DIR = BASE_DIR / "output"
 
 
-def _save_output(user_input: str, result: dict) -> str | None:
-    """把最终成稿存到 output/，返回文件路径；失败静默（不影响主流程）。"""
+def _apply_fixed_block(req: ChatRequest, result: dict) -> str | None:
+    """长片：模型写正文 -> 清洗自创锁定段 -> 拼固定块 -> 硬校验。
+
+    fixed_block 不传就完全走原逻辑，单条带货 / 普通生成不受影响。
+    校验结果挂在 result.fixed_block_check 上，不静默吞掉问题。
+    """
+    if not req.fixed_block:
+        return None
+    rev = result.get("revision") or {}
+    raw = (rev.get("revised") or result.get("content") or "").strip()
+    info = prepare_delivery(req.fixed_block, raw)
+    result["delivery"] = info["delivery"]
+    result["fixed_block_check"] = {
+        "removed": info["removed"],
+        "issues": info["issues"],
+    }
+    return info["delivery"]
+
+
+def _draft_slug(user_input: str) -> str:
+    """成稿文件名：优先用模板里的「品牌片·第 N 段／共 M 段…」标题。
+
+    长片模板开头被拼了「本段输出规则」，直接截前 24 字会让文件名变成一串规则文字，
+    资料库里根本认不出是哪一段。
+    """
+    raw = user_input or ""
+    for line in raw.splitlines():
+        s = line.strip()
+        if "·第" in s and "段／共" in s:
+            return re.sub(r'[\\/:*?"<>|\r\n]+', "_", s)[:24].strip("_")
+    return re.sub(r'[\\/:*?"<>|\r\n]+', "_", raw.strip())[:24].strip("_")
+
+
+def _save_output(user_input: str, result: dict, delivery: str | None = None) -> str | None:
+    """把最终成稿存到 output/，返回文件路径；失败静默（不影响主流程）。
+
+    长片传 delivery（固定块 + 本段正文），保证资料库存档与用户复制走的内容一致。
+    """
     try:
         rev = result.get("revision") or {}
-        final = (rev.get("revised") or result.get("content") or "").strip()
+        final = (delivery or rev.get("revised") or result.get("content") or "").strip()
         if not final:
             return None
         OUTPUT_DIR.mkdir(exist_ok=True)
         ts = time.strftime("%Y%m%d_%H%M%S")
-        slug = re.sub(r'[\\/:*?"<>|\r\n]+', "_", user_input.strip())[:24].strip("_") or "gen"
+        slug = _draft_slug(user_input) or "gen"
         path = OUTPUT_DIR / f"{ts}_{slug}.md"
         # 2026-11-09：run_full 返回的字段是 skills_used，旧代码读 skills，
         # 导致每份成稿的「> 技能」恒为 "-"，提示词库里也查不到本次用了哪些技能。
@@ -611,7 +672,8 @@ def chat(req: ChatRequest):
         on_step=lambda s, p: steps.append({"stage": s, **p}),
     )
     result["steps"] = steps
-    result["saved_to"] = _save_output(req.message, result)
+    delivery = _apply_fixed_block(req, result)
+    result["saved_to"] = _save_output(req.message, result, delivery)
     return result
 
 
@@ -640,7 +702,8 @@ def stream(req: ChatRequest):
             )
             for item in queue:
                 yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
-            result["saved_to"] = _save_output(req.message, result)
+            delivery = _apply_fixed_block(req, result)
+            result["saved_to"] = _save_output(req.message, result, delivery)
             yield f"data: {json.dumps({'stage': 'done', 'result': result}, ensure_ascii=False)}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'stage': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"

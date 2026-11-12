@@ -2052,8 +2052,11 @@ function fillTpl(k){
 */
 const LF = {
   kind:'brand', theme:'', seconds:60, setting:{}, segs:[], step:1,
-  prompts:[], heroes:[], baseCn:{}, warnings:[], note:''
+  prompts:[], heroes:[], baseCn:{}, warnings:[], note:'',
+  fixedBlock:'', fixedLocked:false, settingDirty:false
 };
+/* 全片设定必填 5 项：空值不再写「按主题自定」进稿子，直接拦在生成前。 */
+const LF_REQUIRED = ['产品','拆件','画风','主角','不变项'];
 const LF_LABEL = { brand:'品牌片', kepu:'科普片' };
 const LF_STEPS = { 1:'① 主题 · 拆段', 2:'② 段表 · 全片设定', 3:'③ 主角', 4:'④ 提示词' };
 
@@ -2072,6 +2075,7 @@ async function openLong(kind, theme, sec){
   LF.theme = theme || '';
   LF.seconds = sec || (LF.kind === 'kepu' ? 180 : 60);
   LF.setting = {}; LF.segs = []; LF.prompts = []; LF.warnings = []; LF.note = ''; LF.step = 1;
+  LF.fixedBlock = ''; LF.fixedLocked = false; LF.settingDirty = false;
   document.getElementById('lfbar').className = 'lfbar show';
   lfRender();
   try{
@@ -2119,7 +2123,7 @@ function lfS1(){
 /* 第 2 步的全片设定卡：画幅/红线用默认值，其余五项由模型提议后可改 */
 function lfSettingFields(){
   const s = LF.setting || {};
-  const f = (k, ph) => `<div class="lfrow"><label>${k}</label>
+  const f = (k, ph) => `<div class="lfrow"><label>${k}${LF_REQUIRED.indexOf(k)>=0?' <span style="color:#d97706">*</span>':''}</label>
       <input type="text" id="lfs_${k}" value="${escAttr(s[k]||'')}" placeholder="${escAttr(ph||'')}"></div>`;
   let frames = ['16:9 横屏', '9:16 竖屏', '1:1 方形'];
   if(s['画幅'] && frames.indexOf(s['画幅']) < 0) frames = frames.concat([s['画幅']]);
@@ -2188,7 +2192,7 @@ function lfS2(){
       <span class="lfsum" style="margin:0">合计 <b id="lf_total">${total}</b> 秒 / 目标 ${LF.seconds} 秒</span>
     </div>
     <details open style="margin:10px 0 2px"><summary style="cursor:pointer;font-size:11.5px;color:#6b7686">
-      全片设定（模型按主题和段内容提议的草稿，可以改；每段共用）</summary>
+      全片设定（带 <span style="color:#d97706">*</span> 的 5 项必填，填完锁定；改了已生成的段要重新出）</summary>
       <div style="margin-top:7px">${lfSettingFields()}</div>
     </details>
     <div class="lfacts">
@@ -2226,7 +2230,23 @@ async function lfAssign(btn){
     const el = document.getElementById('lfs_' + k);
     if(el) setting[k] = el.value.trim();
   });
+  /* 必填校验：缺项就不放行，避免「未指定（按主题自定）」「【待填】」进到成稿里。 */
+  const miss = LF_REQUIRED.filter(k => !(setting[k]||'').trim());
+  if(miss.length){
+    toast('全片设定还缺：' + miss.join('、') + '（这 5 项必填）');
+    const first = document.getElementById('lfs_' + miss[0]);
+    if(first) first.focus();
+    return;
+  }
+  /* E=1：允许改设定，但不偷偷改已生成的段 —— 只标脏 + 明说要重新生成。 */
+  const changed = JSON.stringify(setting) !== JSON.stringify(LF.setting || {});
+  const generated = (LF.prompts||[]).filter(p=>p.state==='done').length;
+  if(changed && LF.fixedLocked && generated){
+    LF.settingDirty = true;
+    toast('设定已改：已生成的 ' + generated + ' 段仍是旧固定块，请到④重新生成');
+  }
   LF.setting = setting;
+  LF.fixedLocked = true;
   btn.disabled = true; btn.innerHTML = '<span class="lfspin"></span> 正在分配镜头逻辑…';
   try{
     const r = await fetch('/api/longform/assign', {
@@ -2309,7 +2329,12 @@ async function lfGen(idxs, btn){
     });
     const d = await r.json();
     if(!r.ok) throw new Error(d.detail || ('HTTP ' + r.status));
-    LF.prompts = (d.prompts || []).map(p=>({...p, out:'', state:'wait'}));
+    LF.fixedBlock = d.fixed_block || '';
+    if((d.missing||[]).length){
+      toast('后端仍检测到未填项：' + d.missing.join('、') + '，建议回②补全');
+    }
+    LF.prompts = (d.prompts || []).map(p=>({...p, out:'', body:'', state:'wait'}));
+    LF.settingDirty = false;   /* 这次出稿用的就是当前设定 */
   }catch(e){
     if(btn){ btn.disabled = false; btn.textContent = '重试'; }
     toast('准备模板失败：' + e.message);
@@ -2325,7 +2350,10 @@ async function lfGen(idxs, btn){
 async function lfGenOne(p){
   p.state = 'run'; lfRender();
   try{
-    p.out = await genSegment(p.text, p.skills || []);
+    const d = await genSegment(p.text, p.skills || [], LF.fixedBlock);
+    const F = (LF.fixedBlock||'').trim();
+    p.out = d;                                   /* 复制用：固定块 + 正文 */
+    p.body = (F && d.indexOf(F)===0) ? d.slice(F.length).replace(/^\s+/, '') : d;
     p.state = 'done';
   }catch(e){
     p.out = '生成失败：' + e.message;
@@ -2333,12 +2361,14 @@ async function lfGenOne(p){
   }
 }
 
-/* 单段生成：调同一个 /api/stream，技能用 forced（该段主角+底座），
-   拿 revision.revised 优先、其次 generate.content —— 和主流程交付物一致 */
-async function genSegment(text, skills){
+/* 单段生成：调同一个 /api/stream，技能用 forced（该段主角+底座）。
+   fixed_block 单独传给后端（不进 message，模型看不到），后端组装好 delivery 再返回。
+   单条带货不传它，后端完全走原逻辑。 */
+async function genSegment(text, skills, fixedBlock){
   const resp = await fetch('/api/stream', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ message:text, skills:skills.length?skills:null, do_lint:true, history:null, last_skills:null })
+    body: JSON.stringify({ message:text, skills:skills.length?skills:null, do_lint:true,
+                           history:null, last_skills:null, fixed_block:fixedBlock||null })
   });
   if(!resp.ok){
     const e = await resp.json().catch(()=>({}));
@@ -2358,9 +2388,13 @@ async function genSegment(text, skills){
       if(ev.stage === 'error') err = ev.message || '生成失败';
       if(ev.stage === 'done'){
         const r = ev.result || {};
-        if(r.revision && r.revision.revised) out = r.revision.revised;
+        if(r.delivery) out = r.delivery;                  /* 长片：后端已拼好固定块 */
+        else if(r.revision && r.revision.revised) out = r.revision.revised;
         else if(r.generate && r.generate.content) out = r.generate.content;
         else if(!r.generate) err = r.message || '模型没选出技能';
+        if(r.fixed_block_check && (r.fixed_block_check.issues||[]).length){
+          toast('⚠ 固定块校验：' + r.fixed_block_check.issues.join('；'));
+        }
       }
     }
   }
@@ -2370,6 +2404,15 @@ async function genSegment(text, skills){
 }
 
 function lfS4(){
+  const dirty = LF.settingDirty
+    ? `<div class="lfwarn">⚠ 全片设定改过：下面各段若还是旧固定块，请回③点「全部 N 段一起出」重新生成（系统不会偷偷改你已复制走的内容）</div>`
+    : '';
+  const fixed = LF.fixedBlock
+    ? `<details style="margin:6px 0 0;padding:5px 8px;border:1px solid #e3e7ed;border-radius:6px;background:#f8f9fb">
+         <summary style="cursor:pointer;font-size:11px;color:#6b7686">🔒 全片锁定 · 每段一致（只读，系统统一注入）</summary>
+         <pre style="white-space:pre-wrap;word-break:break-word;font-size:11px;line-height:1.6;margin:6px 0 0;color:var(--fg)">${escapeHtml(LF.fixedBlock)}</pre>
+       </details>`
+    : '';
   const cards = LF.prompts.map((p,i)=>`
     <div class="lfcard">
       <div class="lfc1">
@@ -2382,15 +2425,25 @@ function lfS4(){
           <button class="lfbtn" onclick="lfCopy(${i},this)" ${p.out?'':'disabled'}>复制</button>
         </span>
       </div>
-      <textarea id="lfp_${i}" oninput="LF.prompts[${i}].out=this.value">${escapeHtml(p.out||p.text||'')}</textarea>
+      ${fixed}
+      <textarea id="lfp_${i}" oninput="lfBodyEdit(${i},this.value)">${escapeHtml(p.body||p.text||'')}</textarea>
     </div>`).join('');
   const done = LF.prompts.filter(p=>p.state==='done').length;
-  return `${cards}
+  return `${dirty}${cards}
     <div class="lfacts">
       <button class="lfbtn" onclick="LF.step=3;lfRender()">← 改主角</button>
       <button class="lfbtn" onclick="lfCopyAll(this)">全部复制（${done}/${LF.prompts.length} 已生成）</button>
     </div>
-    <div class="lfsum" style="margin-top:6px">每条都能直接改；复制后逐条丢进生成平台，按段号顺序生成</div>`;
+    <div class="lfsum" style="margin-top:6px">灰块只读、下面正文可改；复制时自动带上同一份固定块，按段号顺序丢进生成平台</div>`;
+}
+
+/* 只改本段正文；固定块永远由系统拼回去，用户改不到也删不掉。 */
+function lfBodyEdit(i, v){
+  const p = LF.prompts[i];
+  if(!p) return;
+  p.body = v;
+  const F = (LF.fixedBlock||'').trim();
+  p.out = F ? (F + '\n\n' + v) : v;
 }
 
 function lfCopy(i, btn){
