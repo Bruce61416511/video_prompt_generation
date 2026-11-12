@@ -732,12 +732,22 @@ def render_segment(kind: str, seg: dict, all_segs: list[dict], setting: dict) ->
     nxt = all_segs[i] if i < n else None
     sec = int(seg.get("sec") or 12)
 
+    content = seg.get("content", "") or ""
+    hero = seg.get("hero_cn", "") or ""
+    # 镜头逻辑也参与出入画判定：content 没提人/产品、hero 提了会漏判（问题①）。
+    lens_text = content + " " + hero
+
     # 产品出镜：只认产品本体的词（以前含「特写」「倒」，结果「浅景深特写果皮」也命中）
-    prod_on = _has_any(seg.get("content", ""), ("瓶", "袋", "包装", "后生元", "饮品", "举起", "喝"))
+    prod_on = _has_any(lens_text, ("瓶", "袋", "包装", "后生元", "饮品", "举起", "喝"))
+    # 产品是否被人物手持/端起/倾倒：决定镜头必须露出手，否则易出「悬浮瓶」（问题①）。
+    prod_held = _has_any(
+        lens_text,
+        ("端起", "举起", "拿起", "握住", "手持", "倾倒", "捧", "喝", "接", "递"),
+    )
     # 真人出镜：不认「人」这个单字 —— 「外星人」「人物」都会误命中；
     # 也不认「接过」—— 第 10 段是外星生物接过饮品，会把它误判成有真人
     person_on = _has_any(
-        seg.get("content", ""),
+        lens_text,
         ("营养师", "主持", "女主", "她", "他的手", "手指", "手部", "脸", "蹲", "站", "走"),
     )
     head = 2 if sec <= 10 else (3 if sec <= 18 else 4)
@@ -749,7 +759,7 @@ def render_segment(kind: str, seg: dict, all_segs: list[dict], setting: dict) ->
     # 固定块不进模板：由后端在交付稿里统一注入，模型看不到、改不了。
     # 本段配置：随段变化的部分，格式统一。
     lines.append("—— 本段配置（仅本段，格式统一）——")
-    lines.append(f"本段镜头逻辑：{seg.get('hero_cn', '')}")
+    lines.append(f"本段镜头逻辑：{hero}")
     if prod_on:
         lines.append("本段产品是否出镜：出镜 —— 按「本片锚点」里的产品外观复原，不许改版、不许渲包装文字")
     else:
@@ -758,6 +768,26 @@ def render_segment(kind: str, seg: dict, all_segs: list[dict], setting: dict) ->
         lines.append("本段真人是否入画：是 —— 按「本片锚点」里的出镜人外观入画，必须同一张脸同一身衣着")
     else:
         lines.append("本段真人是否入画：否 —— 「本片锚点」里设定的人不入画，只拍装置／产品／空镜，也不要临时加别的人或人手")
+    # 问题①：出入画判定与镜头逻辑联动，杜绝「悬浮瓶 / 反物理穿帮」。
+    reconcile = []
+    if person_on and prod_held:
+        reconcile.append(
+            "真人入画且本段涉及手持/端起/倾倒/拿起产品：镜头必须露出该人物持握产品的手/手臂，"
+            "禁止产品脱离人体自行漂浮、自行倾斜、凭空升起或独自运动（Seedance 常见穿帮）。"
+        )
+    if person_on:
+        reconcile.append(
+            "若本段「镜头逻辑」写的是产品特写/空镜、并未安排人物入画，则以上「真人入画」判定作废，"
+            "改按「产品出镜、真人不出画」处理：只拍装置/产品，绝不临时加人手。"
+        )
+    elif prod_on:
+        reconcile.append(
+            "产品出镜但真人不出画：产品不得被任何手持有或操作，只能静置或由镜头运动展示；"
+            "同样禁止产品自行漂浮、自行倾斜、凭空移动。"
+        )
+    if reconcile:
+        lines.append("—— 出入画与镜头逻辑联动（问题①）——")
+        lines.extend(reconcile)
     lines.append("")
 
     # 位置块：用文字交代接缝，不依赖图片（提示词阶段还没有成片）

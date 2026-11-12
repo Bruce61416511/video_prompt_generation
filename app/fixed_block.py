@@ -345,11 +345,128 @@ def verify(delivery: str, fixed: str) -> list[str]:
     return issues
 
 
+# ---------------------------------------------------------------- 正文 vs F 冲突检测（问题②）
+
+_RATIO_RE = re.compile(r"(\d+)\s*[:：]\s*(\d+)")
+
+
+def _parse_fixed_field(fixed: str, label: str) -> str:
+    """从 F 字符串取「标签：值」（值取到行尾或「 —— 」约束语之前）。"""
+    for line in (fixed or "").splitlines():
+        s = line.strip()
+        if s.startswith(label + "：") or s.startswith(label + ":"):
+            rest = s[len(label) + 1:].strip()
+            rest = rest.split(" —— ")[0].split(" - ")[0]
+            return rest
+    return ""
+
+
+def _near_product(text: str, word: str, nouns: list[str]) -> bool:
+    """word 是否出现在某个产品名词的紧邻窗口内（约 6 字），避免泛色/泛材质词误报。"""
+    idx = text.find(word)
+    while idx != -1:
+        window = text[max(0, idx - 6): idx + 6]
+        if any(n in window for n in nouns):
+            return True
+        idx = text.find(word, idx + 1)
+    return False
+
+
+def check_body_vs_fixed(body: str, fixed: str) -> list[str]:
+    """正文 vs 固定块 F 的运行时冲突检测（问题②）。
+
+    模型看不到 F，所以生成后必须由后端外部核对正文是否遵守 F 的锁定项。
+    只报不修（E=1 原则）。命中以下冲突才报，避免误伤：
+      1) 画幅：F 锁的比例/朝向 vs 正文里出现的比例/朝向词；
+      2) 声音：F 锁的旁白模式 vs 正文里出现的相反声音信号；
+      3) 画风：F 锁的风格关键词 vs 正文里出现的相反风格词（疑似）；
+      4) 产品材质/颜色：F 拆件里的材质/颜色 vs 正文产品上下文里的相反词（疑似）。
+    """
+    issues: list[str] = []
+    if not (body and fixed):
+        return issues
+
+    # —— 1) 画幅 ——
+    f_frame = _parse_fixed_field(fixed, "画幅")
+    if f_frame:
+        m = _RATIO_RE.search(f_frame)
+        f_ratio = f"{m.group(1)}:{m.group(2)}" if m else ""
+        f_orient = "竖屏" if "竖" in f_frame else ("横屏" if "横" in f_frame else "")
+        for mm in _RATIO_RE.finditer(body):
+            # 跳过时间码（[00:00-00:03] 之类），否则每段都会误报画幅冲突。
+            a = body[mm.start() - 1] if mm.start() > 0 else ""
+            b = body[mm.end()] if mm.end() < len(body) else ""
+            if a == "-" or b == "-":
+                continue
+            r = f"{mm.group(1)}:{mm.group(2)}"
+            if f_ratio and r != f_ratio:
+                issues.append(f"画幅冲突：正文出现比例 {r}，与固定块锁定的 {f_ratio} 不一致")
+                break
+        if f_orient == "竖屏" and "横屏" in body:
+            issues.append("画幅冲突：正文写「横屏」，与固定块锁定的竖屏不一致")
+        elif f_orient == "横屏" and "竖屏" in body:
+            issues.append("画幅冲突：正文写「竖屏」，与固定块锁定的横屏不一致")
+
+    # —— 2) 声音/旁白 ——
+    f_voice = _parse_fixed_field(fixed, "旁白方式")
+    if f_voice:
+        voff = ("画外音" in f_voice or "旁白" in f_voice) and not ("同期" in f_voice or "口播" in f_voice)
+        von = ("同期" in f_voice or "口播" in f_voice) and not voff
+        vsilent = not (voff or von) and any(k in f_voice for k in ("无台词", "纯环境", "ASMR", "静音", "无声", "无对白"))
+        if vsilent:
+            if any(k in body for k in ("台词", "口播", "旁白", "说话")):
+                issues.append("声音冲突：固定块要求无台词/纯环境，正文却出现台词或口播")
+        elif von:
+            if "画外音" in body or "voiceover" in body.lower() or "画外" in body:
+                issues.append("声音冲突：固定块要求同期声口播（画面有说话人），正文却出现画外音")
+        elif voff:
+            if "同期声" in body or "对镜头说" in body or "口型" in body:
+                issues.append("声音冲突：固定块要求画外音旁白（画面无说话人），正文却出现同期声/口型")
+
+    # —— 3) 画风（疑似：关键词反向）——
+    f_style = _parse_fixed_field(fixed, "画风")
+    STYLE_PAIRS = [
+        ("写实", ("二次元", "动漫", "动画", "卡通", "Q版", "3D动画")),
+        ("二次元", ("写实", "真人", "实拍")),
+        ("水墨", ("写实", "3D", "二次元", "手绘")),
+        ("3D", ("写实", "水墨", "二次元", "手绘")),
+    ]
+    if f_style:
+        for base, oppos in STYLE_PAIRS:
+            if base in f_style:
+                for opp in oppos:
+                    if opp in body:
+                        issues.append(f"疑似画风冲突：正文出现「{opp}」，与固定块锁定的「{base}」画风不一致")
+                        break
+                break
+
+    # —— 4) 产品材质/颜色（疑似：限定在产品名词附近，降低误报）——
+    f_part = _parse_fixed_field(fixed, "产品拆件") or _parse_fixed_field(fixed, "产品")
+    MAT = ["玻璃", "陶瓷", "塑料", "金属", "不锈钢", "纸", "木质", "亚克力", "硅胶"]
+    COL = ["红", "蓝", "绿", "黄", "白", "黑", "金", "银", "透明", "粉", "紫", "橙"]
+    PROD_NOUN = ["瓶", "杯", "罐", "盒", "袋", "包装", "饮品", "后生元"]
+    if f_part:
+        f_mats = [x for x in MAT if x in f_part]
+        f_cols = [x for x in COL if x in f_part]
+        for mat in f_mats:
+            for opp in MAT:
+                if opp != mat and opp in body and _near_product(body, opp, PROD_NOUN):
+                    issues.append(f"疑似产品材质冲突：正文出现「{opp}」材质，与固定块锁定的「{mat}」不一致")
+                    break
+        for col in f_cols:
+            for opp in COL:
+                if opp != col and opp in body and _near_product(body, opp, PROD_NOUN):
+                    issues.append(f"疑似产品颜色冲突：正文出现「{opp}」色，与固定块锁定的「{col}」不一致")
+                    break
+    return issues
+
+
 def prepare_delivery(fixed: str, raw: str) -> dict:
-    """模型输出 -> 清洗 -> 组装 -> 校验，一次做完，供 /api/stream 调用。"""
+    """模型输出 -> 清洗 -> 组装 -> 冲突检测 -> 校验，一次做完，供 /api/stream 调用。"""
     body, removed, clean_issues = clean_model_output(raw)
     delivery = assemble(fixed, body)
-    issues = clean_issues + verify(delivery, fixed)
+    conflicts = check_body_vs_fixed(body, fixed) if fixed else []
+    issues = clean_issues + conflicts + verify(delivery, fixed)
     return {
         "delivery": delivery,
         "body": body,
