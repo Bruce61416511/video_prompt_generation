@@ -2141,10 +2141,22 @@ function lfSettingFields(){
       f('镜头光线','例：50mm 定焦、上午侧窗自然光') +
       f('参考图','例：产品图=product_front.png；人物图=nutritionist.png') +
       `</div></details>`;
+  /* 旁白必须写具体：只填「全片统一」时模型会各段自己编声音（2026-11-12 实测 4 种）。 */
+  const voiceOpts = [
+    '全片同期声，本人对镜头口播，无画外音、无字幕、无 BGM',
+    '全片画外音旁白，画面里不出现说话人、不出现口型，不加字幕、不加 BGM',
+    '全片无台词，只保留现场环境音，不加旁白、不加 BGM',
+    '全片无台词纯 ASMR，只收物体与动作声，不加人声、不加 BGM'
+  ];
+  const voice = `<div class="lfrow"><label>旁白 <span style="color:#d97706">*</span></label>
+      <input type="text" id="lfs_旁白" list="lf_voice_opts" value="${escAttr(s['旁白']||'')}"
+       placeholder="必须选一种并写清：同期声口播 / 画外音 / 无台词环境音 / 纯 ASMR">
+      <datalist id="lf_voice_opts">${voiceOpts.map(v=>`<option value="${escAttr(v)}"></option>`).join('')}</datalist></div>
+      <div class="lfsum" style="margin:-2px 0 5px">别只写「全片统一」—— 那是空话，模型会每段自己编声音，点输入框可选用建议值</div>`;
   return f('产品','主题里推断不出就自己填') + f('拆件','外观拆解：材质/颜色/开关方式/内容物') +
          fr + f('画风','一句话定全片视觉风格') + f('主角','出镜人物：年龄/性别/穿着；没有真人可留空') +
          f('不变项','全片复用的场景与光线锚点') + f('红线','合规护栏') +
-         f('旁白','全片统一：同期声对镜头说 / 全片画外音 / 无台词纯 ASMR') + advanced;
+         voice + advanced;
 }
 
 async function lfPlan(btn){
@@ -2249,6 +2261,18 @@ async function lfAssign(btn){
     toast('全片设定还缺：' + miss.join('、') + '（这 ' + LF_REQUIRED.length + ' 项必填）');
     const first = document.getElementById('lfs_' + miss[0]);
     if(first) first.focus();
+    return;
+  }
+  /* 旁白值有效性：与 app/fixed_block.py::is_vague_voice 同规则。
+     只写「全片统一」这类空话，等于没给声音规矩，模型会各段自己编。 */
+  const vv = (setting['旁白']||'').trim();
+  const vague = /^(全片统一|统一|全片一致|一致|按主题自定|未指定|无|无要求|随便|同前|同全片|-|—)$/;
+  const voiceOK = !vague.test(vv) &&
+    /同期|口播|旁白|画外|配音|台词|环境音|ASMR|静音|无声|女声|男声|音色|语速|字幕|BGM|配乐/.test(vv);
+  if(!voiceOK){
+    toast('旁白要写具体：例「全片同期声，本人对镜头口播，无画外音、无字幕、无 BGM」；别只写「' + vv + '」');
+    const el = document.getElementById('lfs_旁白');
+    if(el) el.focus();
     return;
   }
   /* E=1：允许改设定，但不偷偷改已生成的段 —— 只标脏 + 明说要重新生成。 */

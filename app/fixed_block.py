@@ -64,8 +64,10 @@ BODY_INSTRUCTION = (
     "只写这一段的内容：开场画面、中段推进、结尾定格、台词等本段要素。\n"
     "下面的「本片锚点」是全片统一的事实：写画面和台词必须严格照用，"
     "产品外观、人物长相、声音规矩都不许自己另编；但不要把锚点那几行原样抄进正文。\n"
-    "不要复述全片设定块（固定块、产品/人物锁定、画幅、合规红线、不变项、参考图清单）"
+    "不要复述全片设定块（固定块、产品/人物锁定、合规红线、不变项、参考图清单）"
     "—— 这些由系统统一注入交付稿，正文里重复写会被清洗掉。\n"
+    "画幅以「本片锚点」给的比例为唯一标准：正文里若提到比例，只能写这个比例，"
+    "不许自己另写 9:16 / 16:9 / 竖屏 / 横屏；不确定就干脆不写比例。\n"
     "声音规矩每段都要一致：不许这一段写「本段无台词」、下一段又开口说话，"
     "也不许只在某一段自称「全局约束」。"
 )
@@ -77,15 +79,37 @@ BAD_PLACEHOLDERS = (
     "未指定（按主题自定）",
 )
 
+# 「旁白方式」是必填，但只填「全片统一」这类空话等于没给规矩：
+# 实测 2026-11-12 用户 7 段品牌片出现 4 种声音（同期声 / 画外音 / 纯环境音 / 口播）。
+VAGUE_VOICE = frozenset({
+    "全片统一", "统一", "全片一致", "一致", "按主题自定", "未指定",
+    "无", "无要求", "随便", "同前", "同全片", "-", "—",
+})
+VOICE_KEYS = (
+    "同期", "口播", "旁白", "画外", "配音", "台词", "环境音", "ASMR",
+    "静音", "无声", "女声", "男声", "音色", "语速", "字幕", "BGM", "配乐",
+)
+
+
+def is_vague_voice(value: str) -> bool:
+    """旁白值是否没有信息量。空、纯空话、或不含任何声音关键词都算无效。"""
+    v = str(value or "").strip()
+    if not v or v in VAGUE_VOICE:
+        return True
+    return not any(k in v for k in VOICE_KEYS)
+
 
 def validate_setting(setting: dict) -> list[str]:
-    """返回没填的必填项标签。空列表 = 可以生成。"""
+    """返回没填 / 填了空话的必填项标签。空列表 = 可以生成。"""
     s = setting or {}
-    return [
-        label
-        for label, key, _constraint, required in FIXED_FIELDS
-        if required and not str(s.get(key) or "").strip()
-    ]
+    out = []
+    for label, key, _constraint, required in FIXED_FIELDS:
+        if not required:
+            continue
+        v = str(s.get(key) or "").strip()
+        if not v or (key == "旁白" and is_vague_voice(v)):
+            out.append(label)
+    return out
 
 
 def build_fixed_block(setting: dict, kind: str = "brand") -> str:
@@ -120,10 +144,16 @@ def build_seg_anchors(setting: dict, kind: str = "brand") -> str:
     def v(key: str) -> str:
         return str(s.get(key) or "").strip()
 
+    # 画幅必须进锚点：只写在 F 里、又明令模型「不要复述画幅」时，
+    # 模型拿不到值只能按短视频常识猜 9:16，品牌片 16:9 必然和 F 打架
+    #（2026-11-12 用户 7 段实测 6/7 段写错比例）。
+    frame = v("画幅") or DEFAULT_FRAME.get(kind, DEFAULT_FRAME["brand"])
     lines = [
         ANCHOR_HEADING,
+        f"画幅（全片唯一）：{frame} —— 正文里只能写这个比例，"
+        "不许自己另写 9:16 / 16:9 / 竖屏 / 横屏；不确定就别写比例",
         f"产品：{v('产品')}；外观：{v('拆件')} "
-        "—— 画面里的瓶身、颜色、液体必须与此处一致，不许自己另编材质或颜色",
+        "—— 画面里的容器/包装、颜色、液体必须与此处一致，不许自己另编材质或颜色",
     ]
     if v("主角"):
         lines.append(
