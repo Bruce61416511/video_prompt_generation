@@ -30,6 +30,7 @@ from openai import OpenAI
 
 from .skill_loader import SkillLoader
 from .timing_capacity import capacity_report
+from .delivery_gate import sanitize_delivery, check_delivery, scan_declared_seconds
 
 
 # ---------------------------------------------------------------- 配置
@@ -147,21 +148,21 @@ def _fix_timecodes(text: str) -> tuple[str, list[dict]]:
 #
 # 2026-11-09：此前秒数数值完全交给 lint 技能的 S2/S8（模型自查），而技能里压根
 # 没有「单段不能超 5 秒」这一条。实测 11:22 产品片 2/2/5/6/5/5/3/2=30 质检判合格，
-# 6 秒段就这么交付了。这里补四道纯算术硬判，不合格只改方括号里的数字、正文一字不动：
+# 6 秒段就这么交付了。这里补四道纯算术硬判。
 #
-#   ① 每段 1~5 秒  ② 段间首尾相接  ③ 首段从 0 / 末段 = 总时长  ④ 各段之和 = 总时长
+# 2026-11-12 P0 修复：**改为只报不改**。
+#   旧逻辑会拿「用户原话」里的「每段8秒左右」当全片总时长，把 9/10/9 秒压成 3/2/3 秒，
+#   且代码明确「只改数字，画面文字一字未动」，结果稿里「28 秒」和「8 秒」并存、
+#   每格 2~3 秒却塞着 9~10 秒的动作 —— 直接产出废片（t3/t4/t7/科普1 实测）。
+#   按 E=1：校验只给报告，绝不擅自改已生成的稿；问题列出来由人核对或重新生成。
+#   单段上限同步放宽到 10 秒（原 5 秒是代码自写经验值，与模板 3×8=24~30 秒天生打架）。
 #
-# 依据：
-#   - 5 秒上限：data/style-library.json:264 的经验值（可调常量，不是平台规定）
-#   - 30 秒：Seedance 2.5 单次生成物理上限 —— 只提醒，绝不拿来砍用户内容
-#   - 总时长取值优先级：用户原话 > 稿内声明 > 末段终点（退化，此时 ④ 是自证）
-#
-# 与 A 的区别：这里不编排节奏，几段、哪段长哪段短仍由模型排，代码只保证数字自洽。
-
+#   ① 每段 1~10 秒  ② 段间首尾相接  ③ 首段从 0 / 末段 = 总时长  ④ 各段之和 = 总时长
+#   总时长取值优先级（新）：稿内声明 > 末段终点（退化） > 用户原话（仅作校验，不采信）
 TIMING_SEG_MIN = 1          # 单段下限（低于 1 秒平台解析不出）
-TIMING_SEG_MAX = 5          # 单段上限（经验值，可改）
+TIMING_SEG_MAX = 10         # 单段上限（经验值，2026-11-12 由 5 放宽到 10）
 TIMING_PLATFORM_MAX = 30    # 单次生成上限，只提醒不改
-TIMING_COMPACT_WARN = 1     # 单段被压缩超过这个秒数 → 挂黄字提醒人工看一眼
+TIMING_COMPACT_WARN = 1     # 保留常量，兼容旧报告字段
 
 # 「总时长 28 秒」「【时长】28 秒」「总和 28 秒」「时间轴按 28 秒排布」等
 _TOTAL_RE = re.compile(
@@ -188,20 +189,60 @@ def _timing_segments(text: str) -> list[dict]:
     return out
 
 
-def _user_seconds(user_input: str) -> int | None:
-    """从用户原话里抽总时长。
+# 局部/分段时长描述：这些「N 秒」说的是某一拍，不是全片总时长。
+# 2026-11-12 P0：t4 模板的「每段8秒左右」曾被当成 total=8，把 28 秒的稿压坏。
+_LOCAL_DUR_RE = re.compile(
+    r"(?:每段|每拍|每镜|每一拍|单段|每片段)\s*\d{1,3}\s*(?:[-–—~～]\s*\d{1,3}\s*)?"
+    r"(?:秒|s\b)\s*(?:左右|上下|以内|之内|内|约)?"
+    r"|前\s*\d{1,3}\s*(?:秒|s\b)\s*(?:钩子|抓人|铺垫|开场|内)?"
+    r"|第\s*\d{1,3}\s*[-–—~～]\s*\d{1,3}\s*(?:秒|s\b)"
+    r"|第\s*\d{1,3}\s*(?:秒|s\b)"
+    r"|\d{1,3}\s*[-–—~～]\s*\d{1,3}\s*(?:秒|s\b)",
+    re.I,
+)
+# 模板里的时长区间：「【15-30】秒」「15-30 秒」——只当允许范围做校验，不当定值。
+_RANGE_RE = re.compile(
+    r"(?:【\s*)?(\d{1,3})\s*[-–—~～]\s*(\d{1,3})\s*(?:\s*】)?\s*(?:秒|s\b)",
+    re.I,
+)
 
-    输入框里常贴着整份模板（含「前3秒钩子」「【15-30】秒」），裸抓第一个数字会
-    把 3 秒当成全片长度。所以：去掉片型区间 → 收集所有「N 秒」→ 只留 ≥8 秒的
-    候选 → 取最大值。写「30 秒的片子，前 3 秒抓人」也能正确取 30。
+
+def _user_seconds_detail(user_input: str) -> dict:
+    """解析用户输入里的时长信息。
+
+    返回 {"seconds": int|None, "allowed_range": (lo,hi)|None,
+          "excluded": [被排除的局部时长描述], "notes": []}
+
+    两条硬规矩（2026-11-12 P0）：
+      ① 「每段 N 秒 / 前 N 秒钩子 / 第 a-b 秒」这类局部时长一律不算总时长；
+      ② 「【a-b】秒」区间解析为 allowed_range，只做校验，绝不拿去当定值改稿。
     """
+    detail: dict = {"seconds": None, "allowed_range": None, "excluded": [], "notes": []}
     if not user_input:
-        return None
+        return detail
+
+    ranges = [
+        (int(a), int(b)) for a, b in _RANGE_RE.findall(user_input)
+        if 8 <= int(a) <= int(b) <= 300
+    ]
+    if ranges:
+        detail["allowed_range"] = (min(a for a, _ in ranges), max(b for _, b in ranges))
+
     clean = re.sub(r"【[^】]*】", " ", user_input)
-    clean = re.sub(r"\d{1,3}\s*[-–—~～]\s*\d{1,3}\s*(?:秒|s\b)", " ", clean, flags=re.I)
+    for m in _LOCAL_DUR_RE.finditer(clean):
+        detail["excluded"].append(m.group(0)[:30])
+    clean = _LOCAL_DUR_RE.sub(" ", clean)
+    clean = _RANGE_RE.sub(" ", clean)   # 无【】的裸区间也剔掉，别把右端点当总时长
+
     nums = [int(x) for x in re.findall(r"(?<!\d)(\d{1,3})\s*(?:秒|s\b)", clean, re.I)]
     candidates = [v for v in nums if 8 <= v <= 300]
-    return max(candidates) if candidates else None
+    detail["seconds"] = max(candidates) if candidates else None
+    return detail
+
+
+def _user_seconds(user_input: str) -> int | None:
+    """从用户原话里抽总时长（兼容旧调用）。细节见 _user_seconds_detail。"""
+    return _user_seconds_detail(user_input)["seconds"]
 
 
 def _declared_seconds(text: str) -> int | None:
@@ -213,15 +254,52 @@ def _declared_seconds(text: str) -> int | None:
     return v if 1 <= v <= 300 else None
 
 
-def _resolve_total(text: str, user_input: str, segs: list[dict]) -> tuple[int, str]:
-    """总时长三级取值：用户原话 > 稿内声明 > 末段终点（退化）。"""
-    u = _user_seconds(user_input)
-    if u:
-        return u, "用户原话"
+def _resolve_total(text: str, user_input: str, segs: list[dict]) -> tuple[int, str, dict]:
+    """总时长取值（2026-11-12 P0 改）：稿内声明 > 末段终点 > 用户原话（仅校验）。
+
+    旧版把「用户原话」放第一位，错误值（模板里的「每段8秒左右」）会压过稿内
+    声明，直接导致时间码被压坏。现在用户原话只用来做一致性提示，绝不参与改稿。
+    """
     d = _declared_seconds(text)
+    end = segs[-1]["end"] if segs else None
+    detail = _user_seconds_detail(user_input)
+    u = detail["seconds"]
+    meta: dict = {
+        "user_seconds": u,
+        "allowed_range": detail["allowed_range"],
+        "excluded_local": detail["excluded"],
+        "notes": [],
+        "low_confidence": False,
+    }
+
     if d:
-        return d, "稿内声明"
-    return segs[-1]["end"], "末段终点（退化）"
+        total, source = d, "稿内声明"
+    elif end:
+        total, source = end, "末段终点（退化）"
+        meta["low_confidence"] = True
+    else:
+        total, source = (u or 0), "用户原话（无稿内依据）"
+        meta["low_confidence"] = True
+
+    if d and end and d != end:
+        meta["notes"].append(
+            f"稿内声明 {d} 秒与时间码终点 {end} 秒不一致；按稿内声明 {d} 秒校验，本次未改稿。"
+        )
+        meta["low_confidence"] = True
+    if u is not None and u != total:
+        meta["notes"].append(
+            f"你输入的 {u} 秒与稿内 {total} 秒不一致；已按稿内数值校验，未采信输入值（避免把稿子压坏）。"
+        )
+        meta["low_confidence"] = True
+    elif u is not None:
+        source += "（与用户原话一致）"
+
+    rng = detail["allowed_range"]
+    if rng and total and not (rng[0] <= total <= rng[1]):
+        meta["notes"].append(
+            f"模板标注允许区间 {rng[0]}-{rng[1]} 秒，本稿 {total} 秒在区间外，建议核对。"
+        )
+    return total, source, meta
 
 
 def _timing_issues(segs: list[dict], total: int) -> list[dict]:
@@ -298,10 +376,12 @@ def _fmt_range(start: int, dur: int) -> str:
 
 
 def _sync_declared_total(text: str, total: int) -> tuple[str, int]:
-    """把稿内「总时长 N 秒」类声明里的数字同步成 total。
+    """[已停用] 把稿内「总时长 N 秒」类声明里的数字同步成 total。
 
-    只替换 _TOTAL_RE 捕获到的那个数字本身，声明句其余文字、画面文字一律不动。
-    必须在所有按位置的时间码替换做完之后再调用，否则位置会失效。
+    2026-11-12 P0：这个函数是「28 秒 / 8 秒」两个数字并存的帮凶之一 ——
+    它只同步 _TOTAL_RE 命中的那一处，首行「竖屏 9:16，28 秒」漏网。
+    现在链路不再调用它，保留仅为兼容外部脚本；请改用 scan_declared_seconds()
+    收集全部声明并只报不改。
     """
     changed = 0
 
@@ -318,9 +398,18 @@ def _sync_declared_total(text: str, total: int) -> tuple[str, int]:
 
 
 def _fix_timing_impl(text: str, user_input: str = "") -> tuple[str, dict]:
+    """时间码数值结构校验 —— **只报不改**（E=1，2026-11-12 P0）。
+
+    旧版会 _redistribute() 重排秒数并替换时间码，注释还写死「只改数字，
+    画面文字一字未动」：一旦总时长取错（模板的「每段8秒左右」被当成 8），
+    28 秒的稿就会被压成 8 秒，稿内两个总秒数打架，成片直接报废。
+    现在无论有多少 issues，text 都原样返回；报告里给 issues + suggestions
+    （建议值，明确标注「未应用」），由人决定核对还是重新生成。
+    """
     report: dict = {
         "checked": False, "ok": True, "total": None, "total_source": "",
-        "segments": 0, "issues": [], "fixed": [], "notes": [],
+        "segments": 0, "issues": [], "fixed": [], "suggestions": [], "notes": [],
+        "policy": "report_only", "low_confidence": False, "declared_seconds": [],
     }
     segs = _timing_segments(text)
     if len(segs) < 2:
@@ -329,8 +418,10 @@ def _fix_timing_impl(text: str, user_input: str = "") -> tuple[str, dict]:
 
     report["checked"] = True
     report["segments"] = len(segs)
-    total, source = _resolve_total(text, user_input, segs)
+    total, source, meta = _resolve_total(text, user_input, segs)
     report["total"], report["total_source"] = total, source
+    report["low_confidence"] = meta["low_confidence"]
+    report["notes"].extend(meta["notes"])
 
     if source.startswith("末段终点"):
         report["notes"].append(
@@ -342,94 +433,74 @@ def _fix_timing_impl(text: str, user_input: str = "") -> tuple[str, dict]:
             "数字已按声明值校验，实际生成仍需拆成多条提示词。"
         )
 
-    issues = _timing_issues(segs, total)
-    report["issues"] = issues
-    if not issues:
-        # 时间码本来就合法，但稿内另写「总时长 30 秒」而用户说 45 秒时，稿子仍自相矛盾。
-        # 这一档时间码没被改，就不越界去改正文，只明确提醒人工核对。
-        if source == "用户原话":
-            declared = _declared_seconds(text)
-            if declared is not None and declared != total:
-                report["notes"].append(
-                    f"稿内写「总时长 {declared} 秒」，与你输入的 {total} 秒不一致；"
-                    "时间码本身合法，本次未改动任何数字，请手动核对这句声明。"
-                )
-        return text, report          # 全合格：一个字都不动
-    report["ok"] = False
+    # 稿内所有时长声明：多个值互相打架要报出来（旧版只改其中一处，越改越乱）
+    declared = scan_declared_seconds(text)
+    values = sorted({d["value"] for d in declared})
+    report["declared_seconds"] = values
+    if len(values) > 1:
+        report["issues"].append({
+            "code": "declared_seconds_conflict",
+            "text": "稿内出现多个互相打架的总时长声明：" + " / ".join(f"{v} 秒" for v in values),
+        })
+    if values and total and any(v != total for v in values):
+        report["issues"].append({
+            "code": "declared_vs_total",
+            "text": f"稿内声明 {values} 秒与本次校验基准 {total} 秒不一致，请核对",
+        })
 
-    durations = [s["dur"] for s in segs]
-    new_durs = _redistribute(durations, total)
-    if new_durs is None:
-        n = len(segs)
-        lo, hi = TIMING_SEG_MIN, TIMING_SEG_MAX
-        if total > n * hi:
-            need = (total + hi - 1) // hi
-            advice = (f"当前段数不够：{n} 段最多只能装 {n * hi} 秒，"
-                      f"建议至少增加到 {need} 段（或拆成多条生成）")
-        else:
-            advice = (f"当前段数过多：{n} 段最少也要 {n * lo} 秒，"
-                      f"建议减少到 {total // lo} 段以内（或提高总时长声明）")
+    report["issues"].extend(_timing_issues(segs, total))
+    if report["issues"]:
+        report["ok"] = False
+        # 建议值只写进 suggestions，绝不写进 fixed（前端会把 fixed 渲染成「已自动修正 N 处」）
+        new_durs = _redistribute([s["dur"] for s in segs], total)
+        if new_durs:
+            cursor, sugg = 0, []
+            for i, d in enumerate(new_durs):
+                raw = _fmt_range(cursor, d)
+                cursor += d
+                if raw != segs[i]["raw"]:
+                    sugg.append({"index": i + 1, "from": segs[i]["raw"], "to": raw,
+                                 "applied": False})
+            report["suggestions"] = sugg
         report["notes"].append(
-            f"共 {n} 段、总时长 {total} 秒，无法在每段 {lo}~{hi} 秒内排满。{advice}。"
-            "本次未改数字，稿子原样交付。"
+            "按 E=1：本次只报不改，时间码与画面文字一字未动；请人工核对或重新生成。"
         )
-        return text, report          # 第三档：不硬凑、不静默改
-
-    new_raws, cursor = [], 0
-    for d in new_durs:
-        new_raws.append(_fmt_range(cursor, d))
-        cursor += d
-
-    out = text
-    fixed_items: list[dict] = []
-    compact_notes: list[str] = []
-    # 从后往前按位置替换，前面的下标不会因为长度变化而失效
-    for i in range(len(segs) - 1, -1, -1):
-        seg, new_raw = segs[i], new_raws[i]
-        a, b = seg["pos"]
-        out = out[:a] + new_raw + out[b:]
-        # 只把「数字真的变了」的段记进修正明细，别把没动的也算成改过
-        if new_raw != seg["raw"]:
-            fixed_items.append({
-                "index": i + 1, "from": seg["raw"], "to": new_raw,
-                "sec_from": seg["dur"], "sec_to": new_durs[i],
-            })
-            if seg["dur"] - new_durs[i] > TIMING_COMPACT_WARN:
-                compact_notes.append(
-                    f"第 {i+1} 段由 {seg['dur']} 秒压到 {new_durs[i]} 秒，请确认段内动作演得完。"
-                )
-    fixed_items.reverse()
-    compact_notes.reverse()
-    report["fixed"] = fixed_items
-    report["notes"] = compact_notes + report["notes"]
-    report["notes"].append(
-        f"已自动修正 {len(fixed_items)} 处时间码数字（只改数字，画面文字一字未动）。"
-    )
-
-    # 时间码已经重排完，此时同步稿内的总时长声明数字，避免「时间码到 00:45、
-    # 正文却写总时长 30 秒」的自相矛盾。只在用户原话优先级下做，只改那个数字。
-    if source == "用户原话":
-        declared = _declared_seconds(text)
-        if declared is not None and declared != total:
-            out, n_sync = _sync_declared_total(out, total)
-            if n_sync:
-                report["notes"].append(
-                    f"稿内原写「总时长 {declared} 秒」，与你输入的 {total} 秒不一致；"
-                    f"已同步 {n_sync} 处声明数字为 {total} 秒（只改这个数字，其余文字一字未动）。"
-                )
-    return out, report
+    return text, report
 
 
 def _fix_timing(text: str, user_input: str = "") -> tuple[str, dict]:
-    """C 方案主入口。任何异常都不许影响出稿，原样返回并记一条说明。"""
+    """C 方案主入口（现为只报不改）。任何异常都不许影响出稿，原样返回并记一条说明。"""
     try:
         return _fix_timing_impl(text, user_input)
     except Exception as e:  # noqa: BLE001
         return text, {
             "checked": False, "ok": True, "total": None, "total_source": "",
-            "segments": 0, "issues": [], "fixed": [],
-            "notes": [f"时间码数值校验异常，已跳过：{e}"],
+            "segments": 0, "issues": [], "fixed": [], "suggestions": [],
+            "policy": "report_only", "low_confidence": True, "declared_seconds": [],
+            "notes": [f"时间码数值校验异常，已跳过（稿子原样交付）：{e}"],
         }
+
+
+# 语义化别名：链路里用 check_timing 强调「这里只收报告，不改文本」。
+check_timing = _fix_timing
+
+
+def _apply_sanitize(text: str) -> tuple[str, dict]:
+    """出稿链路里调用净化的薄封装，返回 (净化稿, 净化报告)。"""
+    info = sanitize_delivery(text)
+    return info["text"], info
+
+
+def _sanitize_log_entry(stage: str, info: dict) -> dict:
+    return {
+        "stage": stage,
+        "removed_lines": info["removed_lines"],
+        "removed": info["removed"],
+        "removed_chars": info["removed_chars"],
+        "rolled_back": info["rolled_back"],
+        "mode": info["mode"],
+        "issues": info["issues"],
+    }
 
 
 def _extract_product_name(user_input: str) -> str:
@@ -859,6 +930,23 @@ class Agent:
             "画面描述、镜头语言、主体动作、场景与光影等全部用中文书写；"
             "仅模型名、专有名词和无法翻译的参数可保留英文。所有说明性文字也用中文。"
         )
+
+        # 交付稿纯净度（2026-11-12 P0-2 源头禁令）：
+        # 技能库 27/28 个 SKILL.md 的 Workflow 第 5 步要求模型「返回提示词 +
+        # 锚定案例链接 + 三条验收清单」，模型是在遵守技能，不是幻觉。这里在技能
+        # 内容之后追加一条更高优先级的硬约束（技能文件由上游同步重生成，不能去改）。
+        # 出稿链路还有 delivery_gate.sanitize_delivery 做确定性兜底，双保险。
+        # 质检技能不走这条 —— 它的产出物本身就是带结构的报告。
+        if not any("lint" in n.lower() for n in skill_names):
+            system += (
+                "\n\n【交付稿纯净度（最高优先级，压过上面技能 Workflow 中任何"
+                "「返回案例链接／验收清单」的要求）】"
+                "你的回复只能是提示词正文本身，前后不加任何说明。"
+                "禁止写 markdown 标题（# 或 ## 开头）、禁止写「锚定案例／案例链接／"
+                "时长说明／验收清单／生成后必查」等标签、禁止出现任何 URL、"
+                "禁止用 ``` 代码围栏把正文包起来、禁止在正文后附检查清单或分隔线。"
+                "注意：【全局约束】【负面清单】等本段画面负面词属于提示词正文，必须保留。"
+            )
 
         # 人物真实感规则：只在「写提示词」时注入，质检调用不注入
         # （质检是拿规则去判别人，别再让规则反过来影响它的判词）。
@@ -1415,18 +1503,37 @@ class Agent:
         realism["subject"] = subject
         realism["tier"] = tier
 
-        # C 方案：时间码数值结构硬校验（2026-11-09）。
-        # 特意放在产品名/真实感等「可能再改一次稿」的兜底之后、质检之前 ——
-        # 这样后面所有环节拿到的都是数字合法的稿，不用指望模型自查。
+        # 本次产出物本身就是「质检报告」时不走净化 —— 报告天然带 markdown 标题
+        # 和编号清单，按交付稿规则删会把报告删残。带货/品牌/科普才需要纯净正文。
+        is_lint_only = bool(picked) and all("lint" in n.lower() for n in picked)
+
+        # 交付闸门①（2026-11-12 P0-2）：先去掉技能 Workflow 带出来的文档外壳，
+        # 再让 lint / revise 看到干净稿。否则 lint 会把「# 标题／锚定案例链接／
+        # 验收清单」当正文检查，revise 还会原样把外壳带回来。
+        # 净化是幂等的，长片后续 prepare_delivery 再跑自己的完整版清洗不会冲突。
+        sanitize_log: list[dict] = []
+        if not is_lint_only:
+            gen["content"], gen_san = _apply_sanitize(gen["content"])
+            sanitize_log.append(_sanitize_log_entry("generate", gen_san))
+            if gen_san["removed_lines"] or gen_san["rolled_back"]:
+                emit("delivery_sanitized", {
+                    "stage": "generate",
+                    "removed_lines": gen_san["removed_lines"],
+                    "rolled_back": gen_san["rolled_back"],
+                })
+
+        # 时间码数值结构校验（2026-11-12 P0-1 起改为**只报不改**）：
+        # 旧版在这里 _fix_timing 重排秒数，把 28 秒的稿压成 8 秒；修正稿出来后
+        # 又压一次，形成「lint 明明报了 S8 必改、交付稿却还是坏的」的闭环。
         timing_reports: list[dict] = []
-        gen["content"], gen_timing = _fix_timing(gen["content"], user_input)
-        if gen_timing.get("fixed") or gen_timing.get("notes"):
+        gen_timing = check_timing(gen["content"], user_input)[1]
+        if gen_timing.get("issues") or gen_timing.get("notes"):
             timing_reports.append({"stage": "generate", **gen_timing})
-        if gen_timing.get("fixed"):
-            emit("timing_fixed", {
+        if gen_timing.get("issues"):
+            emit("timing_issues", {
                 "stage": "generate",
-                "count": len(gen_timing["fixed"]),
-                "items": [f"{x['from']} → {x['to']}" for x in gen_timing["fixed"]],
+                "count": len(gen_timing["issues"]),
+                "items": [x["text"] for x in gen_timing["issues"][:5]],
             })
 
         emit("generated", {"chars": len(gen["content"])})
@@ -1449,7 +1556,7 @@ class Agent:
         #
         # 唯一例外：本次**生成的技能本身就是质检技能**（用户只说了「检查这段提示词」），
         # 那时产出物已经是质检报告了，再拿去审一遍等于「审报告」，纯浪费，跳过。
-        gen_is_lint = bool(picked) and all("lint" in n.lower() for n in picked)
+        gen_is_lint = is_lint_only
 
         lint_skill = next((n for n in picked if "lint" in n.lower()), None)
         if not lint_skill:
@@ -1489,17 +1596,26 @@ class Agent:
                 if rev.get("revised") and prod and prod not in rev["revised"]:
                     rev["revised"] = self._fix_product_name(prod, rev["revised"])
 
-                # C 方案第二处：修正稿是网页「复制即用」和 output/ 存的那份，
-                # 模型改稿时完全可能又写出一个 6 秒段，所以必须再量一次。
+                # 交付闸门②：修正稿是「复制即用」和资料库存档的那一份，
+                # 模型改稿时可能又带回外壳，或又写出不合法的时间码 —— 再净化、
+                # 再校验一次（都只报不改，绝不擅自改已生成的稿）。
                 if rev.get("revised"):
-                    rev["revised"], rev_timing = _fix_timing(rev["revised"], user_input)
-                    if rev_timing.get("fixed") or rev_timing.get("notes"):
-                        timing_reports.append({"stage": "revision", **rev_timing})
-                    if rev_timing.get("fixed"):
-                        emit("timing_fixed", {
+                    rev["revised"], rev_san = _apply_sanitize(rev["revised"])
+                    sanitize_log.append(_sanitize_log_entry("revision", rev_san))
+                    if rev_san["removed_lines"] or rev_san["rolled_back"]:
+                        emit("delivery_sanitized", {
                             "stage": "revision",
-                            "count": len(rev_timing["fixed"]),
-                            "items": [f"{x['from']} → {x['to']}" for x in rev_timing["fixed"]],
+                            "removed_lines": rev_san["removed_lines"],
+                            "rolled_back": rev_san["rolled_back"],
+                        })
+                    rev_timing = check_timing(rev["revised"], user_input)[1]
+                    if rev_timing.get("issues") or rev_timing.get("notes"):
+                        timing_reports.append({"stage": "revision", **rev_timing})
+                    if rev_timing.get("issues"):
+                        emit("timing_issues", {
+                            "stage": "revision",
+                            "count": len(rev_timing["issues"]),
+                            "items": [x["text"] for x in rev_timing["issues"][:5]],
                         })
 
                 result["revision"] = rev
@@ -1520,5 +1636,30 @@ class Agent:
         if cap.get("notes"):
             timing_reports.append({"stage": "capacity", **cap})
         result["timing"] = timing_reports
+
+        # 交付闸门③：最终复检（只报不改）。把结论挂在 result 上，前端 / 存档 /
+        # 长片 fixed_block_check 都能看见；命中问题绝不自动改稿，按 E=1 由人决定。
+        try:
+            if is_lint_only:
+                final_check = {
+                    "ok": True, "issues": [], "warnings": [],
+                    "cleaned_text": final_text, "sanitize": {}, "stats": {},
+                    "skipped": "本次产出物是质检报告，跳过交付稿纯净度复检",
+                }
+            else:
+                final_check = check_delivery(final_text, user_input)
+        except Exception as e:  # noqa: BLE001 —— 复检失败绝不能拖垮出稿
+            final_check = {
+                "ok": True, "issues": [], "warnings": [],
+                "cleaned_text": final_text, "sanitize": {},
+                "stats": {}, "error": f"最终复检异常（稿子原样交付）：{e}",
+            }
+        result["final_check"] = final_check
+        result["sanitize"] = sanitize_log
+        if final_check.get("issues"):
+            emit("delivery_issues", {
+                "count": len(final_check["issues"]),
+                "items": [x["text"] for x in final_check["issues"][:5]],
+            })
         return result
 

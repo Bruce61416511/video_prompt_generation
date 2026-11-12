@@ -1095,19 +1095,35 @@ async function realSend(text, el, skills){
 
     let html = '';
 
-    /* C 方案：时间码数值由代码自动校验/修正过，必须让人看得见，绝不静默改。
+    /* 时间码校验：2026-11-12 起只报不改（旧版会按错误总时长压扁秒数，产出废片）。
        记录可能来自「第一稿」和「修正稿」两个阶段，合并成一条提示。 */
     const tmList  = Array.isArray(res.timing) ? res.timing : [];
     const tmFixed = tmList.reduce((n, r) => n + ((r.fixed && r.fixed.length) || 0), 0);
     const tmNotes = tmList.reduce((a, r) => a.concat(r.notes  || []), []);
     const tmIss   = tmList.reduce((a, r) => a.concat(r.issues || []), []);
-    if(tmFixed || tmNotes.length){
+    if(tmFixed || tmNotes.length || tmIss.length){
       html += `<div style="margin:0 0 14px;padding:9px 12px;border:1px solid var(--line);border-left:3px solid var(--warn);border-radius:8px;background:var(--panel2);font-size:12px;line-height:1.85;color:var(--dim)">
-        <b style="color:var(--warn)">⚠ 时间码校验</b>${tmFixed
-          ? `：已自动修正 <b>${tmFixed}</b> 处（只改方括号里的数字，画面文字一字未动）`
-          : '：本次未改动数字'}
-        ${tmIss.length   ? `<div style="margin-top:4px">原问题：${escapeHtml(tmIss.map(x => x.text || x).join('；'))}</div>` : ''}
+        <b style="color:var(--warn)">⚠ 时间码校验</b>：本次只报不改，未改动任何数字
+        ${tmFixed ? `（历史修正记录 ${tmFixed} 处）` : ''}
+        ${tmIss.length   ? `<div style="margin-top:4px">待核对：${escapeHtml(tmIss.map(x => x.text || x).join('；'))}</div>` : ''}
         ${tmNotes.length ? `<div style="margin-top:4px">${tmNotes.map(n => '· ' + escapeHtml(n)).join('<br>')}</div>` : ''}
+      </div>`;
+    }
+
+    /* 交付闸门：后端净化掉了文档外壳、并对最终稿做了复检，这里让人看得见。 */
+    const fc       = res.final_check || {};
+    const fcIss    = (fc.issues || []).map(x => (x && x.text) || String(x));
+    const fcWarn   = (fc.warnings || []).map(x => (x && x.text) || String(x));
+    const fcRm     = (Array.isArray(res.sanitize) ? res.sanitize : [])
+                       .reduce((n, x) => n + (x.removed_lines || 0), 0);
+    const fcRoll   = !!(fc.stats && fc.stats.rolled_back);
+    if(fcIss.length || fcWarn.length || fcRm || fcRoll){
+      html += `<div style="margin:0 0 14px;padding:9px 12px;border:1px solid var(--line);border-left:3px solid ${fcIss.length?'var(--warn)':'var(--ok)'};border-radius:8px;background:var(--panel2);font-size:12px;line-height:1.85;color:var(--dim)">
+        <b style="color:${fcIss.length?'var(--warn)':'var(--ok)'}">🧹 交付闸门</b>
+        ${fcRm ? `：已去除 ${fcRm} 行文档外壳（标题／案例链接／围栏／清单），复制稿是纯提示词` : '：已复检'}
+        ${fcRoll ? '<div style="margin-top:4px;color:var(--warn)">净化量超过保护线已回滚原文，请人工检查外壳是否残留</div>' : ''}
+        ${fcIss.length  ? `<div style="margin-top:4px">待核对：${escapeHtml(fcIss.join('；'))}</div>` : ''}
+        ${fcWarn.length ? `<div style="margin-top:4px">${fcWarn.map(w => '· ' + escapeHtml(w)).join('<br>')}</div>` : ''}
       </div>`;
     }
 
@@ -1183,14 +1199,12 @@ const COPY_STORE = {};
 let copySeq = 0;
 
 /* 模型常把提示词整段包在 ``` 代码块里；复制时要去掉围栏，
-   否则用户粘贴到视频平台会带上三个反引号。 */
+   否则用户粘贴到视频平台会带上三个反引号。
+   2026-11-12：后端已在出稿口统一净化，这里做前端兜底 —— 旧版只在开头
+   就是 ``` 时才生效，救不了「# 标题 + 说明 + ```text」这种文档外壳。 */
 function unfence(t){
   const s = String(t || '').trim();
-  if(s.startsWith('```')){
-    const body = s.slice(3).replace(/^[^\n]*\n/, '');        // 去掉 ```lang 这一行
-    return body.replace(/```\s*$/, '').trim();
-  }
-  return s;
+  return s.replace(/^[ \t]*```[^\n]*$/gm, '').trim();
 }
 
 function section(title, content, cls, opts){

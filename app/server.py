@@ -35,6 +35,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .agent import SKILL_LAYERS, Agent, LLMConfig
+from .delivery_gate import sanitize_delivery
 from .longform import (
     BASE_CN,
     HERO_POOL,
@@ -536,11 +537,20 @@ def _apply_fixed_block(req: ChatRequest, result: dict) -> str | None:
         return None
     rev = result.get("revision") or {}
     raw = (rev.get("revised") or result.get("content") or "").strip()
+    # 2026-11-12 P0：长片逐段生成也过一次通用净化（幂等），防止单条链路的
+    # 文档外壳混进固定块之前的正文；长片专属清洗仍由 prepare_delivery 负责。
+    san = sanitize_delivery(raw)
+    raw = san["text"]
     info = prepare_delivery(req.fixed_block, raw)
     result["delivery"] = info["delivery"]
+    issues = list(info["issues"])
+    # 最终交付复检的结论并进来，前端现有「固定块校验」提示无需改就能看见。
+    for x in (result.get("final_check") or {}).get("issues", []):
+        issues.append(x.get("text") or str(x))
     result["fixed_block_check"] = {
         "removed": info["removed"],
-        "issues": info["issues"],
+        "issues": issues,
+        "sanitize_removed": san["removed"],
     }
     return info["delivery"]
 
@@ -572,6 +582,23 @@ def _save_output(user_input: str, result: dict, delivery: str | None = None) -> 
         final = (delivery or rev.get("revised") or result.get("content") or "").strip()
         if not final:
             return None
+        # 2026-11-12 P0：落盘前再净化一次（幂等），并对「仍然带外壳」的稿
+        # 记一条 warning —— 这样资料库里不会再出现带 ``` 和 URL 的稿。
+        san = sanitize_delivery(final)
+        final = san["text"]
+        leftover = bool(re.search(r"https?://|goodcase\.ai|```", final))
+        if leftover or san["rolled_back"]:
+            fc = result.setdefault("final_check", {})
+            warns = fc.setdefault("warnings", [])
+            if leftover:
+                warns.append(
+                    {"code": "archive_shell_left", "text": "存档稿仍含外链或代码围栏，请人工检查"}
+                )
+            if san["rolled_back"]:
+                warns.append(
+                    {"code": "archive_sanitize_rollback",
+                     "text": "存档净化量超过 30% 保护线已回滚，文档外壳可能残留，请人工检查"}
+                )
         OUTPUT_DIR.mkdir(exist_ok=True)
         ts = time.strftime("%Y%m%d_%H%M%S")
         slug = _draft_slug(user_input) or "gen"
